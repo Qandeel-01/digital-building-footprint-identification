@@ -1,27 +1,34 @@
-FROM nvidia/cuda:10.2-runtime-ubuntu18.04
+FROM ubuntu:18.04
 
-ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
-ENV C_INCLUDE_PATH=/usr/include/gdal
-ENV LC_ALL=C.UTF-8
-ENV LANG=C.UTF-8
-
+# System setup with Python 3.6
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
-	apt-get install -y python3-pip && \
-	ln -sfn /usr/bin/python3.7 /usr/bin/python && \
-	ln -sfn /usr/bin/pip3 /usr/bin/pip
+    apt-get install -y --no-install-recommends \
+        python3.6 \
+        python3-pip \
+        python3.6-dev \
+        gdal-bin \
+        libgdal-dev \
+        && \
+    ln -s /usr/bin/python3.6 /usr/bin/python && \
+    ln -s /usr/bin/pip3 /usr/bin/pip && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN deps='build-essential cmake gdal-bin python-gdal libgdal-dev kmod wget apache2 vim apt-utils' && \
-	apt-get update && \
-	apt-get install -y $deps && \
-	pip install --upgrade pip && \
-	pip install GDAL==$(gdal-config --version)
+# Install GDAL with explicit version (no awk parsing)
+RUN GDAL_VERSION=$(gdal-config --version) && \
+    pip install GDAL==${GDAL_VERSION}
 
-WORKDIR /abd_model
-ADD abd_model .
-RUN pip install .
+# Install essential packages
+RUN pip install --upgrade pip wheel setuptools
 
-WORKDIR /abd_utils
-ADD abd_utils .
-RUN pip install .
+# Copy only necessary directories
+WORKDIR /app
+COPY neat_eo ./neat_eo
+COPY ada_tools ./ada_tools
 
-WORKDIR /
+# Install project-specific packages
+RUN pip install ./neat_eo ./ada_tools && \
+    pip install torch==1.6.0+cpu torchvision==0.7.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+
+WORKDIR /workspace

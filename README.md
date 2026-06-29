@@ -1,23 +1,40 @@
-[![version: 0.0.0](https://img.shields.io/badge/stable-0.0.0-blue?style=flat-square)](https://github.com/rodekruis/automated-building-detection)
+[![version: 0.0.0](https://img.shields.io/badge/stable-0.0.0-blue?style=flat-square)](https://github.com/Qandeel-01/digital-building-footprint-identification)
 [![style: PEP 8](https://img.shields.io/badge/style-PEP8-red?style=flat-square)](https://www.python.org/dev/peps/pep-0008/)
 
-# automated-building-detection
-Automated Building Detection using Deep Learning: a NLRC/510 tool
+# Digital Building Footprint Identification
 
-**Scope**: quickly map a large area to support disaster response operations
+Automated Building Detection using Deep Learning for rapid, large-scale building footprint mapping
 
-**Input**: very-high-resolution (<= 0.5 m/pixel) RGB satellite images. Currently supported:
-* [Bing Maps](https://www.bing.com/maps/aerial)
-* Any custom image in raster format
+**Overview**: A comprehensive deep learning-based solution for automatic building detection and extraction from satellite imagery. This project enables rapid mapping of building footprints across large geographic areas, supporting disaster response, urban planning, and geospatial analysis workflows.
 
-**Output**: buildings in vector format (geojson), to be used in digital map products
+**Scope**: Quickly map a large area to support disaster response operations and urban analysis
+
+**Input**: Very-high-resolution (≤ 0.5 m/pixel) RGB satellite images. Currently supported:
+* [Bing Maps](https://www.bing.com/maps/aerial) imagery
+* Any custom raster format imagery
+
+**Output**: Building footprints in vector format (GeoJSON), ready for integration into digital map products and GIS workflows
+
+**Key Features**:
+- Automated building extraction using state-of-the-art deep learning models
+- High-resolution satellite image processing capabilities
+- Batch processing support for large areas
+- Vector output for easy integration with mapping platforms
+- Pre-trained models with proven performance metrics
+- Docker support for easy deployment
+
+## Technology Stack
+
+**Deep Learning Framework**: PyTorch with custom models
+**Architecture**: AlbuNet (U-Net-like encoder-decoder networks)
+**Supported Encoders**: ResNet, ResNext, WideResNet
+**Dataset**: xBD dataset for training
+**Tools**: GDAL/Rasterio for geospatial processing, Shapely for geometry operations
 
 ## Credits
 Built on top of [robosat](https://github.com/mapbox/robosat) and [robosat.pink](https://github.com/acannistra/robosat.pink).
 
-Development: [Ondrej Zacha](https://github.com/ondrejzacha), [Wessel de Jong](https://github.com/Wessel93), [Jacopo Margutti](https://github.com/jmargutt)
-
-Contact: [Jacopo Margutti](mailto:jmargutti@redcross.nl).
+Original Development: [Ondrej Zacha](https://github.com/ondrejzacha), [Wessel de Jong](https://github.com/Wessel93), [Jacopo Margutti](https://github.com/jmargutt)
 
 ## Structure
 * `abd_utils` utility functions to download/process satellite images

@@ -8,7 +8,7 @@ import urllib
 import click
 import pandas as pd
 import geopandas as gpd
-from .tiles import Tile, TileCollection
+from tiles import Tile, TileCollection  # Remove the dot
 from shapely.geometry import box
 import subprocess
 from dotenv import load_dotenv
