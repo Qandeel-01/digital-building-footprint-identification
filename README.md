@@ -1,125 +1,117 @@
-[![version: 0.0.0](https://img.shields.io/badge/stable-0.0.0-blue?style=flat-square)](https://github.com/Qandeel-01/digital-building-footprint-identification)
-[![style: PEP 8](https://img.shields.io/badge/style-PEP8-red?style=flat-square)](https://www.python.org/dev/peps/pep-0008/)
-
 # Digital Building Footprint Identification
 
-Automated Building Detection using Deep Learning for rapid, large-scale building footprint mapping
+Automated building detection using deep learning for rapid, large-scale building footprint mapping from very-high-resolution satellite imagery. Produces GeoJSON vector output ready for GIS integration, supporting disaster response and urban analysis workflows.
 
-**Overview**: A comprehensive deep learning-based solution for automatic building detection and extraction from satellite imagery. This project enables rapid mapping of building footprints across large geographic areas, supporting disaster response, urban planning, and geospatial analysis workflows.
+## Overview
 
-**Scope**: Quickly map a large area to support disaster response operations and urban analysis
+| Property | Detail |
+|---|---|
+| Input | VHR satellite imagery (≤ 0.5 m/pixel) — Bing Maps or custom raster |
+| Output | Building footprints in GeoJSON format |
+| Architecture | AlbuNet — U-Net encoder-decoder with ResNet/ResNext/WideResNet encoder |
+| Training dataset | xBD (disaster dataset) |
+| Best model performance | IoU 0.79 · MCC 0.75 |
 
-**Input**: Very-high-resolution (≤ 0.5 m/pixel) RGB satellite images. Currently supported:
-* [Bing Maps](https://www.bing.com/maps/aerial) imagery
-* Any custom raster format imagery
+## Tech Stack
 
-**Output**: Building footprints in vector format (GeoJSON), ready for integration into digital map products and GIS workflows
+| Component | Technology |
+|---|---|
+| Deep learning | PyTorch |
+| Geospatial I/O | GDAL · Rasterio · Shapely |
+| Image tiling | OSM slippy map tile scheme |
+| Containerization | Docker + NVIDIA Container Toolkit |
 
-**Key Features**:
-- Automated building extraction using state-of-the-art deep learning models
-- High-resolution satellite image processing capabilities
-- Batch processing support for large areas
-- Vector output for easy integration with mapping platforms
-- Pre-trained models with proven performance metrics
-- Docker support for easy deployment
+## Setup
 
-## Technology Stack
+### Requirements
 
-**Deep Learning Framework**: PyTorch with custom models
-**Architecture**: AlbuNet (U-Net-like encoder-decoder networks)
-**Supported Encoders**: ResNet, ResNext, WideResNet
-**Dataset**: xBD dataset for training
-**Tools**: GDAL/Rasterio for geospatial processing, Shapely for geometry operations
+- GPU with ≥ 8 GB VRAM
+- NVIDIA drivers + CUDA Toolkit
 
-## Credits
-Built on top of [robosat](https://github.com/mapbox/robosat) and [robosat.pink](https://github.com/acannistra/robosat.pink).
+For image download: a [Bing Maps API key](https://docs.microsoft.com/en-us/bingmaps/getting-started/bing-maps-dev-center-help/getting-a-bing-maps-key)
 
-Original Development: [Ondrej Zacha](https://github.com/ondrejzacha), [Wessel de Jong](https://github.com/Wessel93), [Jacopo Margutti](https://github.com/jmargutt)
-
-## Structure
-* `abd_utils` utility functions to download/process satellite images
-* `abd_model` framework to train and run building detection models on images
-* `input` input/configuration files needed to run the rest
-
-## Requirements:
-To download satellite images:
-* [Bing Maps account](https://docs.microsoft.com/en-us/bingmaps/getting-started/bing-maps-dev-center-help/creating-a-bing-maps-account)
-* [Bing Maps Key](https://docs.microsoft.com/en-us/bingmaps/getting-started/bing-maps-dev-center-help/getting-a-bing-maps-key)
-
-To run the building detection models:
-* GPU with VRAM >= 8 GB
-* [NVIDIA GPU Drivers](https://www.nvidia.com/Download/index.aspx) and [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
-
-If using Docker
-* [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), to expose the GPUs to the docker container
-
-## Getting started
 ### Using Docker
-1. Install [Docker](https://www.docker.com/get-started).
-2. Download the [latest Docker Image](https://hub.docker.com/r/rodekruis/automated-building-detection)
-```
+
+```bash
 docker pull rodekruis/automated-building-detection
-```
-3. Create a docker container and connect it to a local directory (`<path-to-your-workspace>`)
-```
-docker run --name automated-building-detection -dit -v <path-to-your-workspace>:/workdir --ipc=host --gpus all -p 5000:5000 rodekruis/automated-building-detection
-```
-4. Access the container
-```
+docker run --name automated-building-detection -dit \
+  -v <path-to-your-workspace>:/workdir \
+  --ipc=host --gpus all -p 5000:5000 \
+  rodekruis/automated-building-detection
 docker exec -it automated-building-detection bash
 ```
 
 ### Manual Setup
-1. Install Python 3.7 and [pip](https://pypi.org/project/pip/)
-2. Install [Anaconda](https://www.anaconda.com/products/individual)
-3. Create and activate a new Anaconda environment
-```
-conda create --name abdenv python=3.7 
+
+```bash
+conda create --name abdenv python=3.7
 conda activate abdenv
-```
-4. From root directory, move to `abd_utils` and install
-```
-cd abd_utils
-pip install .
-```
-5. Move to `abd_model` and install
-```
-cd ../abd_model
-pip install .
-```
-N.B. Remember to activate `abdenv` next time
 
-## End-to-end example
-How to use these tools? We take as example [a small Dutch town](https://en.wikipedia.org/wiki/Giethoorn); to predict the buildings in another area, simply change the input AOI (you can create your own using e.g. [geojson.io](http://geojson.io/)).
-
-Detailed explanation on usage and parameters of the different commands is given in the subdirectories `abd_utils` and `abd_model`.
-
-1. Add you Bing Maps Key in `abd_utils/src/abd_utils/.env` (the Docker container has [vim](https://www.vim.org/) pre-installed)
-2. Download the images of the AOI, divided in [tiles](https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames)
+cd abd_utils && pip install .
+cd ../abd_model && pip install .
 ```
+
+## End-to-End Example
+
+Using a small Dutch town (Giethoorn) as the example AOI. Swap in any GeoJSON polygon to run detection on a different area.
+
+```bash
+# 1. Add your Bing Maps key to abd_utils/src/abd_utils/.env
+
+# 2. Download imagery tiles
 download-images --aoi input/AOI.geojson --output bing-images
-```
-3. Convert the images into the format needed to run the building detection model
-```
+
+# 3. Convert to model input format
 images-to-abd --images bing-images/images --output abd-input
-```
-4. [Download a pre-trained model](https://drive.google.com/file/d/1pMkrBjdpmOgT_MzqZSLHvmQDsZNM_Lwo/view?usp=sharing) (more details below) and add it to the `input` directory
-5. Run the building detection model 
-```
-abd predict --config input/config.toml --dataset abd-input --cover abd-input/cover.csv --checkpoint input/neat-fullxview-epoch75.pth --out abd-predictions --metatiles --keep_borders
-```
-6. Vectorize model output (from pixels to polygons)
-```
-abd vectorize --config input/config.toml --type Building --masks abd-predictions --out abd-predictions/buildings.geojson
-```
-7. Merge touching polygons, remove small artifacts, simplify geometry
-```
-filter-buildings --data abd-predictions/buildings.geojson --dest abd-predictions/buildings-clean.geojson
+
+# 4. Download pre-trained model → place in input/
+
+# 5. Run detection
+abd predict \
+  --config input/config.toml \
+  --dataset abd-input \
+  --cover abd-input/cover.csv \
+  --checkpoint input/neat-fullxview-epoch75.pth \
+  --out abd-predictions \
+  --metatiles --keep_borders
+
+# 6. Vectorize (raster → polygons)
+abd vectorize \
+  --config input/config.toml \
+  --type Building \
+  --masks abd-predictions \
+  --out abd-predictions/buildings.geojson
+
+# 7. Clean up geometry
+filter-buildings \
+  --data abd-predictions/buildings.geojson \
+  --dest abd-predictions/buildings-clean.geojson
 ```
 
-## Model collection
-* [neat-fullxview-epoch75](https://rodekruis.sharepoint.com/sites/510-Team/_layouts/15/guestaccess.aspx?docid=048f1927be4af4bc09805be0cfc376b22&authkey=AZSnVN8hrbj9CYSV8K-wg9o&expiration=2021-08-08T22%3A00%3A00.000Z&e=VIywGA): 
-  * architecture: AlbuNet ([U-Net-like](https://arxiv.org/abs/1505.04597) encoder-decoder with a ResNet, ResNext or WideResNet encoder)
-  * training: [xBD dataset](https://arxiv.org/pdf/1911.09296.pdf), 75 epochs
-  * performance: [IoU](https://en.wikipedia.org/wiki/Jaccard_index) 0.79, [MCC](https://en.wikipedia.org/wiki/Matthews_correlation_coefficient) 0.75
+## Pre-trained Model
 
+**neat-fullxview-epoch75** — AlbuNet trained on the xBD dataset for 75 epochs.
+
+| Metric | Score |
+|---|---|
+| IoU (Jaccard Index) | 0.79 |
+| MCC (Matthews Correlation Coefficient) | 0.75 |
+
+## Project Structure
+
+```
+.
+├── abd_model/     # Model training and inference framework
+├── abd_utils/     # Image download and preprocessing utilities
+├── ada_tools/     # Additional analysis tools
+├── neat_eo/       # Vectorization utilities
+├── input/         # AOI, config, and model checkpoint files
+├── run_detection.py
+├── Dockerfile
+└── README.md
+```
+
+## Credits
+
+Built on [robosat](https://github.com/mapbox/robosat) and [robosat.pink](https://github.com/acannistra/robosat.pink).  
+Original development: [Ondrej Zacha](https://github.com/ondrejzacha), [Wessel de Jong](https://github.com/Wessel93), [Jacopo Margutti](https://github.com/jmargutt)
