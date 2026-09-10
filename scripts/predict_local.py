@@ -40,13 +40,12 @@ from pathlib import Path
 import mercantile
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from abd_model.core import load_config, make_palette
 from abd_model.loaders.semseg import SemSeg
 from abd_model.nn.albunet import Albunet
 from abd_model.tiles import tile_label_to_file, tiles_from_csv
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 _LOG = logging.getLogger("bfbench.predict_local")
 
