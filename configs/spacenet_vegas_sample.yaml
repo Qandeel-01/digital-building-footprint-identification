@@ -1,0 +1,39 @@
+# Sample AOI: one SpaceNet 2 Vegas chip.
+#
+# One PS-RGB tile from AOI_2_Vegas train is a ~650x650 px chip at ~30cm GSD,
+# roughly 200m on a side -- small enough to run end-to-end in a couple of
+# minutes on a single GPU, big enough to sanity-check the adapter and the
+# predict pipeline.
+
+aoi:
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  image_ids:
+    - img101
+
+adapter:
+  # xBD training GSD is ~0.5 m/pixel; SpaceNet PS-RGB is ~0.3 m/pixel.
+  # Resample to the training GSD so the model's effective receptive field
+  # matches training. Change only if you have a matching checkpoint.
+  target_gsd_m: 0.5
+  # Match the AlbuNet shape_in from neat-fullxview-epoch75.
+  tile_size: 512
+  # Auto-pick a zoom whose native tile GSD is within 0.15 m of target.
+  # For lat ~36 (Vegas) and target 0.5 m, this lands on z=18.
+  zoom_tolerance: 0.20
+  # Match `abd predict --metatiles --keep_borders`; if you set this false the
+  # adapter drops border tiles that lack a full 8-neighbourhood on disk.
+  keep_borders: true
+  channel_name: images
+
+abd:
+  # Reuse the vendored (SHA-pinned) upstream config for classes/channels/model.
+  config: external/abd/input/config.toml
+  checkpoint: weights/neat-fullxview-epoch75.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/spacenet_vegas_sample
