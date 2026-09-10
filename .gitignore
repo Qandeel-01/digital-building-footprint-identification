@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Model weights and large binaries (never commit)
+/weights/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Data (never commit imagery or generated tiles)
+/data/
+/output/
+/runs/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

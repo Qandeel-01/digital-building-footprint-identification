@@ -1,0 +1,22 @@
+building-footprint-benchmark
+Copyright (c) 2026 Qandeel Fatima
+Licensed under the MIT License. See LICENSE for the full text.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+This project vendors the following upstream project as a git submodule at
+`external/abd`. It is used unmodified; its source is not copied into this
+repository. All rights and credit for that code belong to its original authors.
+
+  automated-building-detection
+    Authors: Ondrej Zacha, Wessel de Jong, Jacopo Margutti
+             (Netherlands Red Cross / Rode Kruis)
+    License: MIT
+    Source:  https://github.com/rodekruis/automated-building-detection
+    Pinned:  see README.md for the exact commit SHA
+
+The upstream project's own LICENSE file (MIT) is preserved inside the submodule
+and applies to all code under `external/abd/`. Nothing in that directory is
+authored by this project.
