@@ -1,0 +1,3 @@
+[submodule "external/abd"]
+	path = external/abd
+	url = https://github.com/rodekruis/automated-building-detection.git
