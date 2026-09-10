@@ -1,0 +1,29 @@
+Fix Python syntax error in abd_model.tools.vectorize.
+
+The pinned upstream SHA e1668a470b94252040f27d26098826c293fbb46d
+wraps a starred expression in bare parentheses:
+
+    from_bounds((*mercantile.bounds(...)), W, H)
+
+which has never been valid Python (SyntaxError: "cannot use starred
+expression here"). Any `abd <subcommand>` invocation fails at import
+time because abd_model.tools.__main__ imports every tool module before
+dispatching. This patch removes the redundant parens, restoring the
+intended `f(*iterable, x, y)` unpacking. No behaviour change.
+
+This patch is applied automatically at env-setup time by
+scripts/apply_upstream_patches.py. It is NOT committed into the
+submodule (that stays pinned to the upstream SHA).
+
+diff --git a/abd_model/src/abd_model/tools/vectorize.py b/abd_model/src/abd_model/tools/vectorize.py
+--- a/abd_model/src/abd_model/tools/vectorize.py
++++ b/abd_model/src/abd_model/tools/vectorize.py
+@@ -53,7 +53,7 @@ def main(args):
+             C, W, H = mask.shape
+         except:
+             W, H = mask.shape
+-        transform = rasterio.transform.from_bounds((*mercantile.bounds(tile.x, tile.y, tile.z)), W, H)
++        transform = rasterio.transform.from_bounds(*mercantile.bounds(tile.x, tile.y, tile.z), W, H)
+
+         for shape, value in rasterio.features.shapes(mask, transform=transform, mask=mask):
+             geom = '"geometry":{{"type": "Polygon", "coordinates":{}}}'.format(json.dumps(shape["coordinates"]))

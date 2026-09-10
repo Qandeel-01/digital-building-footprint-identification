@@ -101,34 +101,48 @@ class AdapterConfig:
 # ---------------------------------------------------------------------------
 
 def webmercator_gsd_at(lat_deg: float, zoom: int, tile_size: int = 256) -> float:
-    """Metres per pixel of a Web-Mercator tile at the given latitude.
+    """Metres per pixel at the given latitude, if a single XYZ tile at
+    `zoom` is rendered at `tile_size` pixels on a side.
 
-    Note: mercantile's tiles are 256px in the canonical slippy-map sense.
-    We compute the *pixel* size at that zoom on 256 tiles regardless of
-    the size we write to disk; the neural net's input tile size doesn't
-    change the geographic footprint of an (x,y,z) tile.
+    The GEOGRAPHIC extent of an (x, y, z) tile is a property of z only
+    (mercantile.xy_bounds). The PIXEL size we choose to write to disk
+    then determines the per-pixel GSD: at tile_size=256 (canonical slippy
+    map) this yields the well-known ~156543 m/px at the equator z=0.
     """
     lat_rad = math.radians(lat_deg)
     return _EARTH_CIRC_M * math.cos(lat_rad) / (tile_size * (2 ** zoom))
 
 
-def pick_zoom_for_gsd(lat_deg: float, target_gsd_m: float, tolerance_m: float = 0.15) -> int:
-    """Pick the zoom whose 256-pixel Web-Mercator tile GSD is closest to
-    `target_gsd_m` at latitude `lat_deg`. Raises if the best match is
-    further than `tolerance_m` from the target.
+def pick_zoom_for_gsd(
+    lat_deg: float,
+    target_gsd_m: float,
+    tolerance_m: float = 0.15,
+    tile_size: int = 256,
+) -> int:
+    """Pick the zoom whose per-pixel GSD, when rendering tiles at `tile_size`
+    pixels, is closest to `target_gsd_m` at latitude `lat_deg`. Raises if
+    the best match is further than `tolerance_m` from the target.
+
+    Passing tile_size=512 (the AlbuNet checkpoint's shape_in) selects a
+    zoom one level LOWER than the canonical-256 case: the same z-tile
+    covers the same geographic extent, but at 512 pixels the effective
+    per-pixel GSD is halved.
     """
-    # native_gsd = C * cos(lat) / (256 * 2^z)  =>  z = log2(C * cos(lat) / (256 * gsd))
     lat_rad = math.radians(lat_deg)
-    ideal = math.log2(_EARTH_CIRC_M * math.cos(lat_rad) / (256 * target_gsd_m))
+    ideal = math.log2(_EARTH_CIRC_M * math.cos(lat_rad) / (tile_size * target_gsd_m))
     z_lo, z_hi = math.floor(ideal), math.ceil(ideal)
-    candidates = {z: abs(webmercator_gsd_at(lat_deg, z) - target_gsd_m) for z in (z_lo, z_hi)}
+    candidates = {
+        z: abs(webmercator_gsd_at(lat_deg, z, tile_size=tile_size) - target_gsd_m)
+        for z in (z_lo, z_hi)
+    }
     best = min(candidates, key=candidates.get)
     err = candidates[best]
     if err > tolerance_m:
         raise ValueError(
             f"no XYZ zoom yields GSD within {tolerance_m} m of target "
-            f"{target_gsd_m} m at lat={lat_deg:.4f}; best is z={best} with "
-            f"native_gsd={webmercator_gsd_at(lat_deg, best):.3f} m "
+            f"{target_gsd_m} m at lat={lat_deg:.4f} with tile_size={tile_size}; "
+            f"best is z={best} with per_pixel_gsd="
+            f"{webmercator_gsd_at(lat_deg, best, tile_size=tile_size):.3f} m "
             f"(err={err:.3f} m). Widen zoom_tolerance to accept."
         )
     return best
@@ -257,18 +271,23 @@ def adapt_spacenet_image(
     center_lat = 0.5 * (aoi_bbox_wgs84[1] + aoi_bbox_wgs84[3])
 
     zoom = config.zoom if config.zoom is not None else pick_zoom_for_gsd(
-        center_lat, config.target_gsd_m, tolerance_m=config.zoom_tolerance
+        center_lat,
+        config.target_gsd_m,
+        tolerance_m=config.zoom_tolerance,
+        tile_size=config.tile_size,
     )
-    native_gsd = webmercator_gsd_at(center_lat, zoom)
+    # Per-output-pixel GSD implied by writing `tile_size` px into each
+    # (x, y, z)-tile's geographic extent.
+    tile_gsd = webmercator_gsd_at(center_lat, zoom, tile_size=config.tile_size)
     _LOG.info(
-        "adapter: lat=%.4f target_gsd=%.3fm chosen_zoom=%d native_gsd=%.3fm",
-        center_lat, config.target_gsd_m, zoom, native_gsd,
+        "adapter: lat=%.4f target_gsd=%.3fm tile_size=%d chosen_zoom=%d effective_gsd=%.3fm",
+        center_lat, config.target_gsd_m, config.tile_size, zoom, tile_gsd,
     )
 
-    # Reproject once to Web Mercator at the native tile GSD; every tile is
-    # then a slice of this array.
+    # Reproject once to Web Mercator at the effective per-pixel GSD.
+    # Every tile is then a `tile_size` x `tile_size` slice of this array.
     reprojected, transform, _ = _reproject_to_webmercator(
-        src_image, native_gsd, config.resampling
+        src_image, tile_gsd, config.resampling
     )
 
     tiles = tiles_covering(aoi_bbox_wgs84, zoom)
@@ -314,7 +333,7 @@ def adapt_spacenet_image(
         source_image=src_image,
         out_root=out_root,
         zoom=zoom,
-        native_gsd_m=native_gsd,
+        effective_gsd_m=tile_gsd,
         target_gsd_m=config.target_gsd_m,
         tile_size=config.tile_size,
         tiles_written=len(tiles_written),
@@ -339,7 +358,7 @@ class AdapterResult:
     source_image: Path
     out_root: Path
     zoom: int
-    native_gsd_m: float
+    effective_gsd_m: float
     target_gsd_m: float
     tile_size: int
     tiles_written: int

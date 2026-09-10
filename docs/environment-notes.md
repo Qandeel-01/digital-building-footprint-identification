@@ -45,6 +45,31 @@ Not carried over: `osmium==3.0.1` (upstream OSM helpers not invoked by
 this benchmark) and `scikit-build` (upstream had it as a build shim, not
 needed at runtime).
 
+## Upstream patch: `abd_model.tools.vectorize` syntax error
+
+The pinned upstream SHA has a straight-up Python syntax error at
+`abd_model/src/abd_model/tools/vectorize.py:56`:
+
+```python
+transform = rasterio.transform.from_bounds((*mercantile.bounds(...)), W, H)
+#                                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+# SyntaxError: cannot use starred expression here
+```
+
+Tested on Python 3.10/3.11/3.13 — all reject this. `git log` on the file
+shows it has been broken since the first upstream commit (Nov 2020); the
+authors likely only ever invoked `abd predict` and never triggered the
+`abd_model.tools.__main__` code path that imports every tool at startup.
+
+We do NOT modify the submodule (that stays pinned to the SHA recorded in
+the root README). Instead, `patches/abd/0001-fix-vectorize-syntax.patch`
+is applied on top by `scripts/apply_upstream_patches.py`, which is called
+as part of the reproduce steps in `docs/reproduce.md`. The patch is a
+one-character-class change: remove the extra parens so it becomes
+`from_bounds(*mercantile.bounds(...), W, H)`.
+
+If upstream ever fixes this, drop the patch and bump the pinned SHA.
+
 ## Windows-specific runtime constraint (predict step)
 
 `abd_model.tools.predict.main` does:

@@ -160,8 +160,8 @@ def _adapt_step(cfg: PipelineConfig, spacenet_dir: Path) -> Path:
             )
         result = adapt_spacenet_image(src, tiles_root, config=cfg.adapter)
         _LOG.info(
-            "adapted %s -> %d tiles at z=%d (native_gsd=%.3f m, target=%.3f m)",
-            src.name, result.tiles_written, result.zoom, result.native_gsd_m,
+            "adapted %s -> %d tiles at z=%d (effective_gsd=%.3f m, target=%.3f m)",
+            src.name, result.tiles_written, result.zoom, result.effective_gsd_m,
             result.target_gsd_m,
         )
     return tiles_root
@@ -241,14 +241,18 @@ def _filter_step(cfg: PipelineConfig, raw_geojson: Path) -> Path:
 # CLI entry points
 # ---------------------------------------------------------------------------
 
+_CONFIG_PATH_ARG = typer.Argument(..., exists=False, help="YAML pipeline config.")
+_STOP_AFTER_OPT = typer.Option(
+    "filter",
+    "--stop-after",
+    help="Stop after this stage. One of: fetch, adapt, predict, vectorize, filter.",
+)
+
+
 @app.command()
 def run(
-    config_path: Path = typer.Argument(..., exists=False, help="YAML pipeline config."),
-    stop_after: str = typer.Option(
-        "filter",
-        "--stop-after",
-        help="Stop after this stage. One of: fetch, adapt, predict, vectorize, filter.",
-    ),
+    config_path: Path = _CONFIG_PATH_ARG,
+    stop_after: str = _STOP_AFTER_OPT,
 ) -> None:
     """Run the full adapt -> predict -> vectorize -> filter pipeline for one AOI."""
     logging.basicConfig(

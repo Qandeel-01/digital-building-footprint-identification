@@ -31,12 +31,20 @@ conda env create -f environment.yml
 conda activate bfbench
 ```
 
-Then install the two upstream packages from the submodule and this
-project's package:
+Apply the small patches on top of the pinned upstream SHA. This is
+required (see `docs/environment-notes.md` "Upstream patch" section):
 
 ```powershell
-pip install -e ./external/abd/abd_model ./external/abd/abd_utils
-pip install -e .
+python scripts/apply_upstream_patches.py
+```
+
+Then install the two upstream packages from the submodule and this
+project's package. Deps are already satisfied by conda, so we skip
+pip's resolver:
+
+```powershell
+pip install --no-deps -e ./external/abd/abd_model ./external/abd/abd_utils
+pip install --no-deps -e .
 ```
 
 ## 3. Verify the toolchain

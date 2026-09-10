@@ -32,11 +32,17 @@ git clone --recurse-submodules <this-repo-url> building-footprint-benchmark
 cd building-footprint-benchmark
 conda env create -f environment.yml
 conda activate bfbench
-pip install -e ./external/abd/abd_model ./external/abd/abd_utils
-pip install -e .
+python scripts/apply_upstream_patches.py
+pip install --no-deps -e ./external/abd/abd_model ./external/abd/abd_utils
+pip install --no-deps -e .
 python scripts/fetch_weights.py
 bfbench run configs/spacenet_vegas_sample.yaml
 ```
+
+Upstream is vendored unchanged; one small patch is applied on top of the
+pinned SHA to fix a Python syntax error that has been in
+`abd_model.tools.vectorize` since 2020. See
+[`docs/environment-notes.md`](docs/environment-notes.md).
 
 ## Layout
 

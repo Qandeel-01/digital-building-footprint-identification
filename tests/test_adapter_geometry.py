@@ -8,7 +8,6 @@ benchmark if violated.
 from __future__ import annotations
 
 import csv
-import math
 from pathlib import Path
 
 import mercantile
@@ -18,7 +17,6 @@ import rasterio
 from rasterio.transform import from_bounds
 
 from bfbench.data import adapter
-
 
 # ---------------------------------------------------------------------------
 # GSD / zoom math
@@ -41,16 +39,31 @@ def test_webmercator_gsd_scales_with_zoom():
         assert g0 / g1 == pytest.approx(2.0, rel=1e-12)
 
 
-def test_pick_zoom_selects_closest_to_target():
-    """At Vegas latitude, targeting 0.5 m should pick z=18.
+def test_pick_zoom_selects_closest_to_target_at_tile_size_256():
+    """At Vegas latitude, canonical 256-px tiles, targeting 0.5 m -> z=18.
 
-    Native GSD at (lat=36.17, z=18) is ~0.482 m; at z=17 it's ~0.964 m;
-    at z=19 it's ~0.241 m. So 18 is the unique closest.
+    Per-pixel GSD at (lat=36.17, z=18, tile_size=256) is ~0.482 m; at z=17
+    it's ~0.964 m; at z=19 it's ~0.241 m. So 18 is the unique closest.
     """
-    z = adapter.pick_zoom_for_gsd(lat_deg=36.17, target_gsd_m=0.5, tolerance_m=0.15)
+    z = adapter.pick_zoom_for_gsd(lat_deg=36.17, target_gsd_m=0.5, tolerance_m=0.15,
+                                  tile_size=256)
     assert z == 18
-    err = abs(adapter.webmercator_gsd_at(36.17, z) - 0.5)
+    err = abs(adapter.webmercator_gsd_at(36.17, z, tile_size=256) - 0.5)
     assert err < 0.15
+
+
+def test_pick_zoom_at_tile_size_512_is_one_lower():
+    """Doubling the tile size halves the per-pixel GSD at the same zoom, so
+    picking a zoom for the same target GSD lands one level lower.
+    """
+    z512 = adapter.pick_zoom_for_gsd(lat_deg=36.17, target_gsd_m=0.5,
+                                     tolerance_m=0.20, tile_size=512)
+    z256 = adapter.pick_zoom_for_gsd(lat_deg=36.17, target_gsd_m=0.5,
+                                     tolerance_m=0.20, tile_size=256)
+    assert z512 == z256 - 1
+    # Per-pixel GSD at chosen zoom must be within tolerance
+    err = abs(adapter.webmercator_gsd_at(36.17, z512, tile_size=512) - 0.5)
+    assert err < 0.20
 
 
 def test_pick_zoom_rejects_out_of_tolerance():
@@ -145,10 +158,15 @@ def test_tile_boundary_alignment_no_gap_no_overlap():
 @pytest.fixture
 def synthetic_utm_raster(tmp_path: Path) -> Path:
     """Create a small synthetic uint8 raster in EPSG:32611 (UTM 11N, Vegas)
-    covering ~250 m x 250 m at 0.30 m/pixel (SpaceNet PS-RGB style)."""
+    covering ~1.2 km x 1.2 km at 0.30 m/pixel (SpaceNet PS-RGB style).
+
+    Sized so the reprojected extent at z=17 (0.9 m/px effective at 512-tile)
+    is comfortably larger than one tile's ~123 m footprint, giving several
+    interior tiles for the border-drop test.
+    """
     left, bottom = 650_000.0, 4_000_000.0
     px = 0.30
-    width, height = 832, 832
+    width, height = 4096, 4096
     right = left + width * px
     top = bottom + height * px
     transform = from_bounds(left, bottom, right, top, width, height)
@@ -199,7 +217,9 @@ def test_adapter_writes_valid_cover_csv_and_tile_tree(synthetic_utm_raster: Path
     )
     assert result.tiles_written == len(cover_set) > 0
     assert result.tile_size == 512
-    assert result.zoom == 18  # implied by target 0.5 m at lat ~36
+    # tile_size=512 + target 0.5 m at lat ~36 -> zoom 17 (one lower than
+    # the canonical-256 case).
+    assert result.zoom == 17
 
 
 def test_adapter_tile_pixel_size_matches_config(synthetic_utm_raster: Path, tmp_path: Path):
