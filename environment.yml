@@ -75,3 +75,7 @@ dependencies:
       - pygeotile==1.0.6
       - webcolors==24.11.1
       - toml==0.10.2
+
+      # Weight fetch (Google Drive interstitial handling for the
+      # neat-fullxview-epoch75 checkpoint).
+      - gdown==5.2.0

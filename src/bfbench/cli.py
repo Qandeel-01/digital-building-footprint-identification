@@ -195,20 +195,52 @@ def _predict_step(cfg: PipelineConfig, tiles_root: Path) -> Path:
     masks_dir.mkdir(parents=True, exist_ok=True)
     cover = tiles_root / "cover.csv"
 
-    argv = [
-        "abd", "predict",
-        "--dataset", str(tiles_root),
-        "--checkpoint", str(cfg.abd.checkpoint),
-        "--config", str(cfg.abd.config),
-        "--cover", str(cover),
-        "--out", str(masks_dir),
-    ]
+    use_local = _should_use_local_predict()
+    if use_local:
+        argv = [
+            sys.executable, str(Path(__file__).resolve().parent.parent.parent /
+                                "scripts" / "predict_local.py"),
+            "--dataset", str(tiles_root),
+            "--checkpoint", str(cfg.abd.checkpoint),
+            "--config", str(cfg.abd.config),
+            "--cover", str(cover),
+            "--out", str(masks_dir),
+        ]
+    else:
+        argv = [
+            "abd", "predict",
+            "--dataset", str(tiles_root),
+            "--checkpoint", str(cfg.abd.checkpoint),
+            "--config", str(cfg.abd.config),
+            "--cover", str(cover),
+            "--out", str(masks_dir),
+        ]
     if cfg.abd.metatiles:
         argv.append("--metatiles")
         if cfg.adapter.keep_borders:
             argv.append("--keep_borders")
     _run_abd(argv)
     return masks_dir
+
+
+def _should_use_local_predict() -> bool:
+    """Decide between `abd predict` and scripts/predict_local.py.
+
+    Upstream predict requires NCCL; PyTorch's Windows build ships without
+    it. We fall back to the local single-GPU shim when NCCL is missing,
+    and log which one is running so the run manifest matches reality.
+    """
+    try:
+        import torch  # noqa: PLC0415
+    except ImportError:
+        return False
+    use = not torch.distributed.is_nccl_available()
+    _LOG.info(
+        "predict backend: %s (nccl_available=%s)",
+        "predict_local.py" if use else "abd predict",
+        torch.distributed.is_nccl_available(),
+    )
+    return use
 
 
 def _vectorize_step(cfg: PipelineConfig, masks_dir: Path) -> Path:

@@ -22,8 +22,9 @@ import urllib.request
 from pathlib import Path
 
 # Google Drive file id transcribed from the pinned upstream README.
-# See external/abd/README.md at SHA e1668a470b94252040f27d26098826c293fbb46d.
-GDRIVE_FILE_ID = "1XvOX_2N_uMt8OWlHKvA2VzL6mvXaVKvY"  # neat-fullxview-epoch75
+# See external/abd/README.md at SHA e1668a470b94252040f27d26098826c293fbb46d
+# ("Download a pre-trained model" link -> neat-fullxview-epoch75).
+GDRIVE_FILE_ID = "1pMkrBjdpmOgT_MzqZSLHvmQDsZNM_Lwo"  # neat-fullxview-epoch75
 DEFAULT_DEST = Path("weights") / "neat-fullxview-epoch75.pth"
 
 # On first successful download we write the observed SHA-256 here. On
@@ -44,39 +45,39 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def _gdrive_download(file_id: str, dest: Path) -> None:
-    """Download a Google Drive public file to `dest`. Handles the confirm-token
-    dance for files >100 MB (Drive interstitial HTML)."""
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    """Download a Google Drive public file to `dest`.
 
+    Google Drive's interstitial flow (for files >100 MB) has changed several
+    times. We shell out to `gdown` (installed via pip) which tracks those
+    changes upstream. If `gdown` is not available we fall back to a plain
+    urllib GET, which is enough only for small files.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import gdown  # type: ignore[import-not-found]
+    except ImportError:
+        print(
+            "WARN: `gdown` not installed; falling back to plain urllib. "
+            "Install with `pip install gdown` for reliable Drive downloads.",
+            file=sys.stderr,
+        )
+        _urllib_fallback(file_id, dest)
+        return
+
+    url = f"https://drive.google.com/uc?id={file_id}"
+    gdown.download(url, str(dest), quiet=False)
+
+
+def _urllib_fallback(file_id: str, dest: Path) -> None:
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
     req = urllib.request.Request(url, headers={"User-Agent": "bfbench-weights-fetch/1.0"})
-    with opener.open(req) as resp:
-        head = resp.read(4096)
-        if b"<html" in head.lower():
-            token = None
-            for line in head.split(b"\n"):
-                if b"confirm=" in line:
-                    token = line.split(b"confirm=", 1)[1].split(b"&", 1)[0].decode()
-                    break
-            if not token:
-                raise RuntimeError(
-                    "Google Drive returned an HTML interstitial without a confirm "
-                    "token. The file may be restricted; fetch manually and place "
-                    f"at {dest}."
-                )
-            url = f"https://drive.google.com/uc?export=download&confirm={token}&id={file_id}"
-            req = urllib.request.Request(url, headers={"User-Agent": "bfbench-weights-fetch/1.0"})
-            with opener.open(req) as resp2, dest.open("wb") as out:
-                out.write(resp2.read())
-        else:
-            with dest.open("wb") as out:
-                out.write(head)
-                while True:
-                    block = resp.read(1 << 20)
-                    if not block:
-                        break
-                    out.write(block)
+    with opener.open(req) as resp, dest.open("wb") as out:
+        while True:
+            block = resp.read(1 << 20)
+            if not block:
+                break
+            out.write(block)
 
 
 def _load_pinned_checksum() -> str | None:

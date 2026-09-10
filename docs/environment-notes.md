@@ -45,30 +45,41 @@ Not carried over: `osmium==3.0.1` (upstream OSM helpers not invoked by
 this benchmark) and `scikit-build` (upstream had it as a build shim, not
 needed at runtime).
 
-## Upstream patch: `abd_model.tools.vectorize` syntax error
+## Upstream patches applied on top of the pinned SHA
 
-The pinned upstream SHA has a straight-up Python syntax error at
-`abd_model/src/abd_model/tools/vectorize.py:56`:
+The submodule pointer stays exactly on the recorded SHA. The following
+patch files live under `patches/abd/` and are applied on top by
+`scripts/apply_upstream_patches.py` (called during setup and idempotent).
+Every patch was necessary to get the pipeline to run at all on the target
+env; each is documented in its own file header.
 
-```python
-transform = rasterio.transform.from_bounds((*mercantile.bounds(...)), W, H)
-#                                          ^^^^^^^^^^^^^^^^^^^^^^^^^
-# SyntaxError: cannot use starred expression here
-```
+| Patch                                          | What it fixes                                                                                       |
+|------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `0001-fix-vectorize-syntax.patch`              | Python `SyntaxError` in `abd_model/tools/vectorize.py:56` (`(*x)` not valid). Present since upstream's first commit (2020). Blocks every `abd <subcommand>` because `__main__` imports every tool at startup. |
+| `0002-fix-webcolors-css3-api.patch`            | `webcolors.CSS3_NAMES_TO_HEX` was removed in webcolors 1.13 (2023). Swap to `webcolors.name_to_hex(name)` which has existed since 1.0. Called from `abd_model.core.make_palette`, hit as soon as `abd predict` starts. |
+| `0003-fix-tiles-from-dir-windows.patch`        | `tiles_from_dir` builds a regex from `os.path.join(root, ...)`. On Windows the backslashes are interpreted as escape sequences (`re.error: bad escape \\i`). Fix: `re.escape(root)` and match `[/\\]` between (z, x, y). No behaviour change on POSIX. |
+| `0004-fix-filter-buildings-geopandas-api.patch`| `abd_utils/filter_buildings.py` uses `gpd.sjoin(..., op='intersects')` (removed in geopandas 1.0, kwarg renamed to `predicate` in 0.10) and `DataFrame.append` (removed in pandas 2.0, replaced by `pd.concat([...])`). Pure API swap. |
 
-Tested on Python 3.10/3.11/3.13 — all reject this. `git log` on the file
-shows it has been broken since the first upstream commit (Nov 2020); the
-authors likely only ever invoked `abd predict` and never triggered the
-`abd_model.tools.__main__` code path that imports every tool at startup.
+If upstream ever merges any of these, drop the corresponding patch and
+bump the pinned SHA.
 
-We do NOT modify the submodule (that stays pinned to the SHA recorded in
-the root README). Instead, `patches/abd/0001-fix-vectorize-syntax.patch`
-is applied on top by `scripts/apply_upstream_patches.py`, which is called
-as part of the reproduce steps in `docs/reproduce.md`. The patch is a
-one-character-class change: remove the extra parens so it becomes
-`from_bounds(*mercantile.bounds(...), W, H)`.
+## Windows single-GPU predict shim (bypassing NCCL)
 
-If upstream ever fixes this, drop the patch and bump the pinned SHA.
+`abd_model.tools.predict.main` does an unconditional
+`assert torch.distributed.is_nccl_available()` and launches DDP workers
+via `mp.spawn`, using the NCCL backend. NCCL is not available in
+PyTorch's Windows build (see verify output above), so `abd predict`
+cannot run natively on the target machine.
+
+`scripts/predict_local.py` is a single-GPU, non-distributed drop-in
+replacement for the predict step. It **uses upstream's model class,
+loader, palette maker, and tile writer unchanged** (`Albunet`, `SemSeg`,
+`make_palette`, `tile_label_to_file`) — it just runs the DataLoader on
+one device and skips the DDP scaffolding. There is no forked model code
+in this project's tree.
+
+The rest of the pipeline (`abd vectorize`, `filter-buildings`) still
+runs through the upstream CLIs via subprocess as originally designed.
 
 ## Windows-specific runtime constraint (predict step)
 

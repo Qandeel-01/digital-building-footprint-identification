@@ -1,0 +1,28 @@
+Make abd_model.tiles.tiles_from_dir work on Windows paths.
+
+Upstream builds a regex by concatenating `os.path.join(root, "(?P<z>...)")`
+and matching against a discovered path. On Windows, `os.path.join` inserts
+`\\` separators, which the regex engine interprets as escape sequences,
+producing `re.error: bad escape \i at position ...`. The regex also uses
+`/` as a literal separator between the (z,x,y) groups, but the discovered
+paths use `\\`.
+
+Fix: `re.escape(root)` and match either `/` or `\\` as the separator
+between z, x, y. Behaviour on POSIX is unchanged (forward slash still
+matches).
+
+diff --git a/abd_model/src/abd_model/tiles.py b/abd_model/src/abd_model/tiles.py
+--- a/abd_model/src/abd_model/tiles.py
++++ b/abd_model/src/abd_model/tiles.py
+@@ -70,7 +70,10 @@ def tiles_from_dir(root, cover=None, xyz=True, xyz_path=False):
+         paths = glob.glob(os.path.join(root, "[0-9]*/[0-9]*/[0-9]*.*"))
+
+         for path in paths:
+-            tile_xyz = re.match(os.path.join(root, "(?P<z>[0-9]+)/(?P<x>[0-9]+)/(?P<y>[0-9]+).+"), path)
++            tile_xyz = re.match(
++                re.escape(os.path.join(root, "")) + r"(?P<z>[0-9]+)[\\/](?P<x>[0-9]+)[\\/](?P<y>[0-9]+).+",
++                path,
++            )
+             if not tile_xyz:
+                 continue
+             tile = mercantile.Tile(int(tile_xyz["x"]), int(tile_xyz["y"]), int(tile_xyz["z"]))

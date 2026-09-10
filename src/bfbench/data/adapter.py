@@ -200,11 +200,17 @@ def _read_window_from_reprojected(
     src_transform,
     bbox_3857: tuple[float, float, float, float],
     tile_size: int,
+    min_valid_fraction: float = 0.1,
 ) -> np.ndarray | None:
-    """Extract a `tile_size` x `tile_size` window from an already-reprojected
-    numpy array (bands, H, W) whose transform is `src_transform` and CRS is
-    EPSG:3857. Returns (tile_size, tile_size, 3) uint8, or None if the tile
-    window falls outside the reprojected extent.
+    """Extract a `tile_size` x `tile_size` RGB window from an already-
+    reprojected numpy array (bands, H, W) whose transform is `src_transform`
+    and CRS is EPSG:3857. Pixels outside the reprojected extent are
+    zero-padded.
+
+    Returns None if the intersection of the tile with the reprojected extent
+    covers less than `min_valid_fraction` of the tile area -- for those
+    tiles there is no useful signal and writing an all-black image would
+    just create spurious predictions.
     """
     left, bottom, right, top = bbox_3857
     src_height, src_width = reprojected.shape[1], reprojected.shape[2]
@@ -212,30 +218,49 @@ def _read_window_from_reprojected(
 
     col_off = int(round(win.col_off))
     row_off = int(round(win.row_off))
-    if (
-        col_off < 0
-        or row_off < 0
-        or col_off + tile_size > src_width
-        or row_off + tile_size > src_height
-    ):
+
+    # Compute the intersection of [col_off, col_off+tile_size) x
+    # [row_off, row_off+tile_size) with the reprojected extent.
+    src_col0 = max(col_off, 0)
+    src_row0 = max(row_off, 0)
+    src_col1 = min(col_off + tile_size, src_width)
+    src_row1 = min(row_off + tile_size, src_height)
+
+    if src_col1 <= src_col0 or src_row1 <= src_row0:
+        return None
+    valid_frac = ((src_col1 - src_col0) * (src_row1 - src_row0)) / (tile_size * tile_size)
+    if valid_frac < min_valid_fraction:
         return None
 
-    patch = reprojected[:, row_off : row_off + tile_size, col_off : col_off + tile_size]
+    # Destination sub-window inside the padded tile.
+    dst_col0 = src_col0 - col_off
+    dst_row0 = src_row0 - row_off
+    dst_col1 = dst_col0 + (src_col1 - src_col0)
+    dst_row1 = dst_row0 + (src_row1 - src_row0)
+
+    bands = min(reprojected.shape[0], 3)
+    padded = np.zeros((bands, tile_size, tile_size), dtype=reprojected.dtype)
+    padded[:, dst_row0:dst_row1, dst_col0:dst_col1] = reprojected[
+        :bands, src_row0:src_row1, src_col0:src_col1
+    ]
+
     # bands-first (C,H,W) -> H,W,C
-    patch = np.moveaxis(patch, 0, -1)
-    # Take the first 3 bands as RGB and clamp to uint8 for the writer.
-    if patch.shape[-1] >= 3:
-        patch = patch[..., :3]
+    patch = np.moveaxis(padded, 0, -1)
     if patch.dtype != np.uint8:
-        # SpaceNet PS-RGB is uint16 in native form; scale by percentile
-        # stretch to avoid a dark image. This is a benchmarking harness, not
-        # a training pipeline, so a fixed p2/p98 stretch is deliberate.
-        lo, hi = np.percentile(patch, (2, 98))
+        # SpaceNet PS-RGB is uint16 in native form; scale by a fixed p2/p98
+        # percentile stretch computed on the VALID (non-padded) region only,
+        # so zero-padding doesn't bias the stretch.
+        valid = patch[dst_row0:dst_row1, dst_col0:dst_col1, :]
+        lo, hi = np.percentile(valid, (2, 98))
         if hi <= lo:
             hi = lo + 1
         patch = np.clip((patch.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255).astype(
             np.uint8
         )
+        # Restore the zero-pad region (percentile stretch may have shifted it)
+        mask = np.zeros(patch.shape[:2], dtype=bool)
+        mask[dst_row0:dst_row1, dst_col0:dst_col1] = True
+        patch[~mask] = 0
     return patch
 
 

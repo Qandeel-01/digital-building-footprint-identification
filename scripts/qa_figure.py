@@ -65,9 +65,10 @@ def main() -> int:
         ax.set_ylim(extent[2], extent[3])
 
     axes[0].set_title("imagery")
-    gdf_pred.boundary.plot(ax=axes[1], color="deeppink", linewidth=1.0)
+    gdf_pred.plot(ax=axes[1], facecolor=(1.0, 0.078, 0.576, 0.35), edgecolor="deeppink",
+                  linewidth=2.0)
     axes[1].set_title(f"predicted ({len(gdf_pred)} polys)")
-    gdf_ref.boundary.plot(ax=axes[2], color="cyan", linewidth=1.0)
+    gdf_ref.plot(ax=axes[2], facecolor=(0.0, 1.0, 1.0, 0.30), edgecolor="cyan", linewidth=2.0)
     axes[2].set_title(f"SpaceNet reference ({len(gdf_ref)} polys)")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
