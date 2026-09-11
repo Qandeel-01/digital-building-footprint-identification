@@ -97,25 +97,28 @@ def build_vrt(chip_paths: list[Path], out_vrt: Path,
 
 def tile_is_fully_covered(vrt_path: Path,
                           bbox_native: tuple[float, float, float, float],
-                          pixel_size: float,
                           min_valid_fraction: float = 1.0) -> bool:
-    """True iff the fraction of non-nodata pixels within `bbox_native`
-    (in the mosaic's native CRS) is >= `min_valid_fraction`.
+    """True iff the fraction of imagery-covered pixels within
+    `bbox_native` (in the mosaic's native CRS) is >= `min_valid_fraction`.
 
-    We read at native pixel size to avoid a resampling round-trip; the
-    caller decides what resolution to actually tile at.
+    A pixel is considered "covered" iff at least one band reads a nonzero
+    value at that pixel. Rationale: SpaceNet 2 PS-RGB chips don't set a
+    `nodata` tag, so `rasterio.read` on a VRT returns 0 for pixels
+    outside any source (that's the boundless `fill_value`) AND for truly
+    dark pixels. The "any band nonzero" test both cases as invalid,
+    which is the correct behaviour for a coverage question (a pixel
+    that reads (0, 0, 0) is unusable regardless of why).
     """
     with rasterio.open(vrt_path) as src:
         left, bottom, right, top = bbox_native
         window = rasterio.windows.from_bounds(left, bottom, right, top,
                                               transform=src.transform)
         try:
-            data = src.read(1, window=window, boundless=True, fill_value=0)
+            data = src.read(window=window, boundless=True, fill_value=0)
         except rasterio.errors.RasterioIOError:
             return False
-        if data.size == 0:
+        if data.size == 0 or data.shape[-1] == 0 or data.shape[-2] == 0:
             return False
-        nodata = src.nodatavals[0] if src.nodatavals else 0
-        valid = (data != nodata).sum()
-        frac = valid / data.size
+        any_band_nonzero = (data != 0).any(axis=0)
+        frac = float(any_band_nonzero.mean())
         return frac >= min_valid_fraction

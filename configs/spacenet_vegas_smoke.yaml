@@ -1,0 +1,39 @@
+# Smoke config: 10 chips of AOI_2_Vegas, for local sanity checks of
+# `bfbench prepare`. Not a benchmark input; the sampled tile count is
+# tiny and the AOI coverage is not statistically meaningful.
+
+aoi:
+  name: AOI_2_Vegas_smoke
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: 10
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 10
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+abd:
+  config: external/abd/input/config.toml
+  checkpoint: weights/neat-fullxview-epoch75.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/spacenet_vegas_smoke

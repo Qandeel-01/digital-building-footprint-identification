@@ -170,7 +170,6 @@ def _sample(cfg: PrepareConfig, vrt_path: Path) -> Path:
     with rasterio.open(vrt_path) as src:
         from rasterio.warp import transform_bounds as _tb
         bounds_wgs = _tb(src.crs, "EPSG:4326", *src.bounds)
-        pixel_size = float(src.transform.a)  # native pixel size, metres
         native_crs = src.crs
 
     lat = 0.5 * (bounds_wgs[1] + bounds_wgs[3])
@@ -195,7 +194,7 @@ def _sample(cfg: PrepareConfig, vrt_path: Path) -> Path:
         se = to_native.transform(e, s)
         bbox_native = (min(nw[0], se[0]), min(nw[1], se[1]),
                        max(nw[0], se[0]), max(nw[1], se[1]))
-        if tile_is_fully_covered(vrt_path, bbox_native, pixel_size,
+        if tile_is_fully_covered(vrt_path, bbox_native,
                                  min_valid_fraction=cfg.min_valid_fraction):
             covered.append(t)
         if (i + 1) % 500 == 0:
