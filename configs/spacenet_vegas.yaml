@@ -1,0 +1,46 @@
+# Full-AOI benchmark config for SpaceNet 2 AOI_2_Vegas train split.
+#
+# Downloads and mosaics chips, merges + dedups reference polygons,
+# samples N tiles deterministically, and writes a per-AOI summary.
+# Reproducibility contract: (same YAML + same submodule SHA + same
+# checkpoint sha256) -> byte-identical tile_ids_hash.
+#
+# NOTE: SpaceNet 2 Vegas train has 3,851 PS-RGB chips; a full download
+# is ~4-10 GB. `chip_limit` below caps the number of chips fetched for
+# smoke-runs and dry-runs. Remove it for the real benchmark.
+
+aoi:
+  name: AOI_2_Vegas
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null                # int or null for "all chips"
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union        # touching_union | iou_threshold | identity
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 150
+  seed: 20260911                  # yyyymmdd of Phase 2 kickoff -- see run manifest
+  min_valid_fraction: 1.0         # tile must be 100% covered by real imagery
+
+abd:
+  config: external/abd/input/config.toml
+  checkpoint: weights/neat-fullxview-epoch75.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/spacenet_vegas

@@ -1,0 +1,38 @@
+# Full-AOI benchmark config for SpaceNet 2 AOI_5_Khartoum train split.
+# See configs/spacenet_vegas.yaml for field semantics.
+
+aoi:
+  name: AOI_5_Khartoum
+  provider: spacenet2
+  aoi_id: 5
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 150
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+abd:
+  config: external/abd/input/config.toml
+  checkpoint: weights/neat-fullxview-epoch75.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/spacenet_khartoum

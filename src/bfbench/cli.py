@@ -349,6 +349,16 @@ def _write_manifest(cfg: PipelineConfig, config_path: Path) -> None:
     )
 
 
+_PREPARE_CONFIG_ARG = typer.Argument(..., exists=False, help="YAML AOI config.")
+
+
+@app.command()
+def prepare(config_path: Path = _PREPARE_CONFIG_ARG) -> None:
+    """Fetch + mosaic + merge references + sample tiles for one AOI (Task 1)."""
+    from bfbench.prepare import prepare as _prepare  # noqa: PLC0415
+    _prepare(config_path)
+
+
 @app.command()
 def verify() -> None:
     """Verify that the upstream `abd` CLI and CUDA are reachable from this env."""
