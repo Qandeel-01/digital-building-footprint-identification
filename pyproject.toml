@@ -23,6 +23,8 @@ dependencies = [
     "pyyaml==6.0.2",
     "tqdm==4.67.1",
     "pillow==11.1.0",
+    "pandas==2.2.3",
+    "pyarrow==17.0.0",
 ]
 
 [project.optional-dependencies]

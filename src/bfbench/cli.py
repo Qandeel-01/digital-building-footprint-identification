@@ -359,6 +359,35 @@ def prepare(config_path: Path = _PREPARE_CONFIG_ARG) -> None:
     _prepare(config_path)
 
 
+_EVAL_CONFIG_ARG = typer.Argument(..., exists=False, help="YAML AOI config.")
+_EVAL_SYNTH_OPT = typer.Option(
+    False, "--synthetic-predictions",
+    help="Skip reading predicted.geojson; synthesise predictions from the "
+         "reference (nudged 2 m east) for smoke-testing the harness.",
+)
+
+
+@app.command()
+def eval(  # noqa: A001 -- shadows builtin, but that's the subcommand name
+    config_path: Path = _EVAL_CONFIG_ARG,
+    synthetic_predictions: bool = _EVAL_SYNTH_OPT,
+) -> None:
+    """Compute per-tile metrics on prepared sampled tiles; write tidy Parquet.
+
+    Reads <work_dir>/{sampled_tiles.json, reference.geojson, predicted.geojson},
+    invokes every function in `bfbench.metrics` on each tile, and writes
+    one row per (aoi, tile, metric) to <work_dir>/eval/results.parquet.
+
+    Stub metrics raise NotImplementedError -- their rows get
+    value=NaN + status="not_implemented" so the pipeline still runs
+    end-to-end. Once the stub is filled in, re-running produces real
+    values without any other code changing.
+    """
+    from bfbench.eval import evaluate  # noqa: PLC0415
+    out = evaluate(config_path, synthetic_predictions=synthetic_predictions)
+    typer.echo(f"eval parquet: {out}")
+
+
 @app.command()
 def verify() -> None:
     """Verify that the upstream `abd` CLI and CUDA are reachable from this env."""
