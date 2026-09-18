@@ -1,99 +1,136 @@
-"""Stratified metrics: by building size and by local density.
+"""Stratified metrics: by building size (per-tile median area) and by
+local building density (buildings per hectare, moving window).
 
-STUB ONLY. See module docstring in bfbench.metrics.
+Implemented in Phase 3.
+
+Bin definition:
+    Quantile bins (equal count per bin) at the AOI level. Ties on the
+    bin edges are broken by putting equal values in the LOWER bin
+    (pandas.qcut default with duplicates='drop').
+
+Confidence bands:
+    Non-parametric bootstrap, n_boot = 500, 95 % percentile interval.
+    Deterministic: the bootstrap uses `numpy.random.default_rng(seed)`
+    with seed = 0 by default.
+
+Density definition:
+    Moving window of radius `window_m` around each tile centroid.
+    Density = (number of REFERENCE buildings whose centroid is within
+    window_m of the tile centroid) / (window area in ha).
+    Reference-not-predicted is used deliberately (density is a
+    property of the ground truth, not the model). See
+    docs/metric-decisions.md section 4 for why there is no default
+    window size.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+
+_BOOT_N = 500
+_BOOT_SEED = 0
+
+
+def _bootstrap_ci(values: np.ndarray,
+                  n_boot: int = _BOOT_N,
+                  seed: int = _BOOT_SEED,
+                  alpha: float = 0.05) -> tuple[float, float]:
+    """Percentile bootstrap CI on the mean. Deterministic given `seed`."""
+    values = np.asarray(values, dtype=float)
+    values = values[~np.isnan(values)]
+    if len(values) == 0:
+        return (float("nan"), float("nan"))
+    if len(values) == 1:
+        return (float(values[0]), float(values[0]))
+    rng = np.random.default_rng(seed)
+    boots = rng.choice(values, size=(n_boot, len(values)), replace=True).mean(axis=1)
+    return (float(np.percentile(boots, 100 * alpha / 2)),
+            float(np.percentile(boots, 100 * (1 - alpha / 2))))
+
+
+def _required_columns(df: pd.DataFrame, cols: list[str], what: str) -> None:
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{what}: missing required columns {missing}")
+
+
+def _stratify(df: pd.DataFrame, x_col: str, y_col: str, bin_col: str,
+              n_bins: int) -> pd.DataFrame:
+    """Common per-AOI quantile-bin + aggregate + bootstrap CI."""
+    out_rows = []
+    for aoi, sub in df.groupby("aoi", sort=True):
+        if len(sub) == 0:
+            continue
+        try:
+            bins = pd.qcut(sub[x_col], q=n_bins, duplicates="drop")
+        except ValueError:
+            # e.g. all-NaN or too few unique values
+            continue
+        for interval, group in sub.groupby(bins, observed=True):
+            values = group[y_col].to_numpy(dtype=float)
+            values = values[~np.isnan(values)]
+            n = int(len(values))
+            if n == 0:
+                continue
+            lo, hi = _bootstrap_ci(values)
+            out_rows.append({
+                "aoi":         aoi,
+                bin_col:       str(interval),
+                "bin_left":    float(interval.left),
+                "bin_right":   float(interval.right),
+                "metric":      group["metric"].iloc[0] if "metric" in group.columns else "value",
+                "value_mean":  float(values.mean()),
+                "value_ci_lo": lo,
+                "value_ci_hi": hi,
+                "n_tiles":     n,
+            })
+    return pd.DataFrame(out_rows)
 
 
 def stratify_by_area(results: pd.DataFrame, n_bins: int) -> pd.DataFrame:
-    """Bucket per-tile results by median-reference-building-area quantile
-    bin and re-aggregate.
+    """Bin per-tile results by median-reference-building-area quantile.
 
-    Inputs:
-        results: tidy long-format DataFrame with (at minimum) columns
-            "aoi", "tile_z", "tile_x", "tile_y", "metric", "value", and
-            "median_ref_area_m2". Every row is one (tile, metric).
-        n_bins: number of quantile bins (equal-count buckets).
+    Input columns required:
+        aoi, metric, value, median_ref_area_m2
 
-    Returns a DataFrame with columns
-        ("aoi", "area_bin", "metric", "value_mean", "value_ci_lo",
-         "value_ci_hi", "n_tiles").
-
-    OPEN DECISIONS:
-
-    1. **Bin definition.** Quantile bins (equal count per bin) OR
-       fixed size cuts in m2 (e.g. 0-50, 50-150, 150-500, 500+)? The
-       former makes AOIs comparable at equal n; the latter makes bin
-       labels physically meaningful. Pick one, document it.
-
-    2. **Which area?** Area of the REFERENCE polygon (matched), or the
-       PREDICTED polygon, or per-tile median reference area? The
-       column in the input is the tile-level median already, but the
-       question "F1 on tiles where the typical building is <50 m2"
-       and "F1 on individual buildings with area <50 m2" are different
-       aggregates. Pick one; the harness in `bfbench.eval` writes the
-       per-tile median.
-
-    3. **Confidence bands.** Bootstrap (recommended, n_boot >= 500) or
-       normal approx? For small AOIs the bootstrap is essential.
-
-    Raises:
-        NotImplementedError.
+    Returns columns:
+        aoi, area_bin, bin_left, bin_right, metric, value_mean,
+        value_ci_lo, value_ci_hi, n_tiles
     """
     if n_bins <= 0:
         raise ValueError(f"n_bins must be positive, got {n_bins}")
-    raise NotImplementedError(
-        "stratify_by_area: bin definition + which area + CI method not chosen. "
-        "See docstring."
-    )
+    _required_columns(results, ["aoi", "value", "median_ref_area_m2"],
+                      what="stratify_by_area")
+    return _stratify(results, "median_ref_area_m2", "value", "area_bin", n_bins)
 
 
-def stratify_by_density(results: pd.DataFrame, window_m: float) -> pd.DataFrame:
-    """Bucket per-tile results by local building density (buildings per
-    hectare in a moving window of radius `window_m` metres) and re-aggregate.
+def stratify_by_density(results: pd.DataFrame, window_m: float,
+                        n_bins: int = 5) -> pd.DataFrame:
+    """Bin per-tile results by local building density.
 
-    Inputs:
-        results: same tidy long-format DataFrame as stratify_by_area.
-        window_m: moving-window radius in metres. Density at a tile is
-            "buildings whose centroid lies within `window_m` of the tile
-            centroid, per hectare".
+    `window_m` is REQUIRED (no default; see docs/metric-decisions.md
+    section 4). The harness runs the sweep at 100, 200 and 500 m and
+    emits results at each window into the Parquet with a `window_m`
+    column, so robustness to window choice is measurable rather than
+    assumed.
 
-    Returns a DataFrame with columns
-        ("aoi", "density_bin", "metric", "value_mean", "value_ci_lo",
-         "value_ci_hi", "n_tiles").
+    Input columns required:
+        aoi, metric, value, ref_density_per_ha
+    Optional:
+        window_m -- if present the results are filtered to matching
+        window_m rows before stratifying.
 
-    OPEN DECISIONS:
-
-    1. **Definition of local density.**
-       - Moving window (radius `window_m`) around the tile centroid,
-         counting reference polygons per hectare.
-       - Or: per-tile density (buildings in tile / tile area). Simpler,
-         but noisy for small tiles.
-       - Or: kernel density estimate at the tile centroid.
-       Different definitions change what "sparse" and "dense" mean.
-       Pick one, document it.
-
-    2. **Window size default.** `window_m = 500` yields a 78.5 ha
-       window at any latitude; `window_m = 1000` -> 314 ha. Larger
-       windows smooth noise, smaller windows resolve neighbourhood-scale
-       heterogeneity. Pick a default; the caller can override.
-
-    3. **Which "buildings" for density.** Reference or predicted?
-       Reference is the honest denominator (density is a property of
-       the ground truth, not the model). Explicitly document.
-
-    4. **Bin definition.** Same choice as stratify_by_area (quantile
-       vs fixed cuts).
-
-    Raises:
-        NotImplementedError.
+    Returns columns:
+        aoi, density_bin, bin_left, bin_right, metric, value_mean,
+        value_ci_lo, value_ci_hi, n_tiles
     """
+    if window_m is None:
+        raise TypeError("stratify_by_density: window_m is required (no default).")
     if window_m <= 0:
         raise ValueError(f"window_m must be positive, got {window_m}")
-    raise NotImplementedError(
-        "stratify_by_density: definition of density + window size + which "
-        "polys + bin definition not chosen. See docstring."
-    )
+    _required_columns(results, ["aoi", "value", "ref_density_per_ha"],
+                      what="stratify_by_density")
+    if "window_m" in results.columns:
+        results = results[results["window_m"].astype(float) == float(window_m)]
+    return _stratify(results, "ref_density_per_ha", "value", "density_bin", n_bins)

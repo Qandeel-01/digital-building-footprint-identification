@@ -18,7 +18,7 @@ a different CRS into the implementation; document why if you do.
 from __future__ import annotations
 
 from bfbench.metrics.boundary import boundary_distance
-from bfbench.metrics.count import count_error
+from bfbench.metrics.count import count_error, count_error_aoi
 from bfbench.metrics.instance import (
     MatchResult,
     instance_prf,
@@ -33,6 +33,7 @@ __all__ = [
     "MatchResult",
     "boundary_distance",
     "count_error",
+    "count_error_aoi",
     "instance_prf",
     "match_instances",
     "merge_rate",
