@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,8 +14,23 @@ from rasterio.transform import from_bounds
 
 from bfbench.data.mosaic import build_vrt, tile_is_fully_covered
 
+
+def _gdalbuildvrt_available() -> bool:
+    """True if gdalbuildvrt is on PATH or in the running env's Library/bin."""
+    if shutil.which("gdalbuildvrt"):
+        return True
+    cand = Path(sys.prefix) / "Library" / "bin" / "gdalbuildvrt.exe"
+    if cand.is_file():
+        return True
+    try:
+        return subprocess.run(["gdalbuildvrt", "--version"],
+                              capture_output=True).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    subprocess.run(["gdalbuildvrt", "--version"], capture_output=True).returncode != 0,
+    not _gdalbuildvrt_available(),
     reason="gdalbuildvrt not on PATH",
 )
 

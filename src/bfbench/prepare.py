@@ -54,6 +54,7 @@ class PrepareConfig:
     split: str
     image_kind: str
     chip_limit: int | None
+    chip_ids_source: Path | None
 
     target_gsd_m: float
     tile_size: int
@@ -86,6 +87,10 @@ def _load(path: Path) -> PrepareConfig:
         split=aoi["split"],
         image_kind=aoi["image_kind"],
         chip_limit=aoi.get("chip_limit"),
+        chip_ids_source=(
+            Path(aoi["chip_ids_source"]).expanduser()
+            if aoi.get("chip_ids_source") else None
+        ),
         target_gsd_m=float(ad["target_gsd_m"]),
         tile_size=int(ad["tile_size"]),
         zoom_tolerance=float(ad["zoom_tolerance"]),
@@ -113,9 +118,23 @@ def _fetch(cfg: PrepareConfig) -> tuple[list[Path], list[Path], str]:
     out_dir = cfg.work_dir / "spacenet"
 
     all_ids = fetcher.list_image_ids(aoi, image_kind=cfg.image_kind)
-    ids = all_ids if cfg.chip_limit is None else all_ids[: cfg.chip_limit]
-    _LOG.info("aoi=%s available_chips=%d fetching=%d",
-              cfg.aoi_name, len(all_ids), len(ids))
+    if cfg.chip_ids_source is not None:
+        selection = json.loads(cfg.chip_ids_source.read_text(encoding="utf-8"))
+        wanted = [c for c in selection["chip_ids"] if c in set(all_ids)]
+        missing = [c for c in selection["chip_ids"] if c not in set(all_ids)]
+        if missing:
+            _LOG.warning("chip_ids_source lists %d IDs not in bucket: %s",
+                         len(missing), missing[:5])
+        ids = wanted
+        _LOG.info("aoi=%s available_chips=%d selected_from_source=%d file=%s",
+                  cfg.aoi_name, len(all_ids), len(ids), cfg.chip_ids_source)
+    elif cfg.chip_limit is not None:
+        ids = all_ids[: cfg.chip_limit]
+        _LOG.info("aoi=%s available_chips=%d fetching(head)=%d",
+                  cfg.aoi_name, len(all_ids), len(ids))
+    else:
+        ids = all_ids
+        _LOG.info("aoi=%s available_chips=%d fetching=all", cfg.aoi_name, len(all_ids))
 
     imgs, geos = [], []
     for iid in ids:

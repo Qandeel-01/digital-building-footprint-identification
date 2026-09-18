@@ -24,7 +24,10 @@ The VRT is preferred over an in-memory rasterio VRT because:
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +35,31 @@ import rasterio
 from rasterio.warp import transform_bounds
 
 _LOG = logging.getLogger(__name__)
+
+
+def _resolve_gdalbuildvrt() -> str:
+    """Find gdalbuildvrt on PATH or in the running conda env's Library/bin.
+
+    On Windows, running `python -m bfbench.cli` with the env's interpreter
+    without activating the env leaves conda-forge's Library/bin off PATH,
+    so `subprocess.run(['gdalbuildvrt', ...])` fails at exec with WinError 2.
+    Fall back to the interpreter-relative location before giving up.
+    """
+    exe = shutil.which("gdalbuildvrt")
+    if exe:
+        return exe
+    # Conda env layout on Windows: sys.prefix / 'Library' / 'bin' / 'gdalbuildvrt.exe'
+    candidates = []
+    for suffix in ("Library/bin/gdalbuildvrt.exe", "bin/gdalbuildvrt"):
+        candidates.append(Path(sys.prefix) / suffix)
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    raise RuntimeError(
+        "gdalbuildvrt not found on PATH or in the current interpreter's env. "
+        "Activate the bfbench conda env (`conda activate bfbench`) or ensure "
+        f"{Path(sys.prefix) / 'Library/bin'} is on PATH."
+    )
 
 
 @dataclass(frozen=True)
@@ -75,10 +103,17 @@ def build_vrt(chip_paths: list[Path], out_vrt: Path,
         )
     native_crs = next(iter(crss))
 
-    args = ["gdalbuildvrt", "-r", resampling, "-overwrite", str(out_vrt)]
+    gdalbuildvrt = _resolve_gdalbuildvrt()
+    args = [gdalbuildvrt, "-r", resampling, "-overwrite", str(out_vrt)]
     args += [str(p) for p in chip_paths]
-    _LOG.info("gdalbuildvrt %s -> %s (%d chips)", resampling, out_vrt, len(chip_paths))
-    proc = subprocess.run(args, capture_output=True, text=True)
+    _LOG.info("gdalbuildvrt %s -> %s (%d chips) using %s",
+              resampling, out_vrt, len(chip_paths), gdalbuildvrt)
+    # Ensure GDAL_DATA is populated so gdalbuildvrt can find PROJ / VRT
+    # schemas even when the env isn't activated.
+    env = os.environ.copy()
+    env.setdefault("GDAL_DATA", str(Path(sys.prefix) / "Library" / "share" / "gdal"))
+    env.setdefault("PROJ_LIB", str(Path(sys.prefix) / "Library" / "share" / "proj"))
+    proc = subprocess.run(args, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         raise RuntimeError(
             f"gdalbuildvrt failed (exit {proc.returncode}):\n"

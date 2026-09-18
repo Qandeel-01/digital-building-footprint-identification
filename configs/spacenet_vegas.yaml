@@ -15,7 +15,11 @@ aoi:
   aoi_id: 2
   split: train
   image_kind: PS-RGB
-  chip_limit: null                # int or null for "all chips"
+  chip_limit: null                # int or null; ignored when chip_ids_source is set
+  # Phase 3 vertical slice: chip cluster near AOI centroid, prepared by
+  # scripts/select_vegas_chips.py. Downloading all 3851 chips is ~10 GB;
+  # the cluster is ~250 chips (~635 MB) around Vegas core.
+  chip_ids_source: runs/vegas_prepare/chip_selection.json
 
 adapter:
   target_gsd_m: 0.5
@@ -43,4 +47,8 @@ abd:
   metatiles: true
 
 run:
-  work_dir: runs/spacenet_vegas
+  work_dir: runs/vegas_prepare
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

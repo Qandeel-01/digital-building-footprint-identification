@@ -1,39 +1,31 @@
 """bfbench evaluation harness.
 
-Runs the metric stubs from `bfbench.metrics` over the sampled tiles
+Runs the metric functions in `bfbench.metrics` over the sampled tiles
 produced by `bfbench prepare`, and writes a tidy long-format Parquet
 file with one row per (aoi, tile, metric).
 
-Contract:
+Metrics implemented in Phase 3:
+    pixel_iou, count_error   -- populated with real values
+    per-tile enrichment      -- median_ref_area_m2, ref_density_per_ha
+                                at window_m in {100, 200, 500}
 
-    * The harness runs end-to-end even when the metric functions are
-      stubs raising NotImplementedError. In that case the corresponding
-      rows have `value = NaN` and `status = "not_implemented"`. The
-      moment a metric is implemented the same run produces real values
-      without any other code changing.
-
-    * The harness is deterministic: it reads the sampled tile list
-      produced by prepare (with its recorded seed and hash), and
-      records the same seed + hash in the eval manifest.
-
-    * The harness is resumable: per-tile results are staged to
-      `<work_dir>/eval/tiles/<z>_<x>_<y>.json` and the final Parquet
-      is a concatenation. Re-running skips tiles whose staged file
-      already exists.
-
-    * Every area/distance/density is computed in an equal-area CRS,
-      enforced by the metric-side assertions (see bfbench.data.equal_area).
+Metrics reserved (still stubs):
+    match_instances, instance_prf, merge_rate, split_rate,
+    boundary_distance       -- rows have value=NaN, status="not_implemented"
 
 Prerequisites (produced by `bfbench prepare` + `bfbench run`):
 
     <work_dir>/sampled_tiles.json      seed + tile IDs (from prepare)
     <work_dir>/reference.geojson       merged, deduped ref polygons
-    <work_dir>/predicted.geojson       ONE geojson from filter-buildings
-                                       (produced by `bfbench run`)
+    <work_dir>/predicted.geojson       from `bfbench run`  (vector output)
 
-If `predicted.geojson` is absent, the harness raises early with a
-message telling the caller to run the prediction stage first. That
-keeps the eval independent of upstream `abd`'s NCCL / Windows issues.
+Optional (used by pixel_iou when present):
+    <work_dir>/masks/<z>/<x>/<y>.png   raw prediction rasters
+
+If per-tile masks exist, pixel_iou reprojects each into the equal-area
+CRS at the tile's grid and rasterises the reference there. If not,
+pixel_iou falls back to rasterising the predicted vectors -- less
+accurate (roundtrip discretisation) but sufficient for a smoke run.
 """
 
 from __future__ import annotations
@@ -48,11 +40,15 @@ from typing import Any
 
 import geopandas as gpd
 import mercantile
+import numpy as np
 import pandas as pd
+import rasterio
 import yaml
+from rasterio.features import rasterize as _rasterize
+from rasterio.transform import from_bounds as _rio_transform_from_bounds
+from rasterio.warp import Resampling, reproject
 from shapely.geometry import box
 
-from bfbench.data.equal_area import DEFAULT_EQUAL_AREA_EPSG
 from bfbench.metrics import (
     boundary_distance,
     count_error,
@@ -64,6 +60,11 @@ from bfbench.metrics import (
 )
 
 _LOG = logging.getLogger("bfbench.eval")
+
+# Windows in metres used for the density enrichment. The stratify helper
+# expects a `window_m` column so downstream figures can pick one.
+DENSITY_WINDOWS_M = (100.0, 200.0, 500.0)
+DEFAULT_DENSITY_WINDOW_M = 200.0
 
 
 @dataclass(frozen=True)
@@ -91,163 +92,208 @@ def _load(path: Path) -> EvalConfig:
 
 
 def _tile_bounds_wgs84(tile: mercantile.Tile) -> tuple[float, float, float, float]:
-    """(west, south, east, north) lon/lat bounds for one tile."""
     b = mercantile.bounds(tile)
     return (b.west, b.south, b.east, b.north)
 
 
-def _clip_by_centroid(gdf: gpd.GeoDataFrame,
-                      tile_polygon_ea) -> gpd.GeoDataFrame:
-    """Return the subset of `gdf` whose centroid lies inside `tile_polygon_ea`.
-
-    Centroid-in-polygon is the correct rule for the tile-scope numerator
-    in phase-2 metrics (see docs/phase1-diagnosis.md finding 1).
-    Assumes gdf is already in the equal-area CRS.
-    """
+def _clip_by_centroid(gdf: gpd.GeoDataFrame, tile_polygon_ea) -> gpd.GeoDataFrame:
+    """Return subset of gdf whose centroid lies inside `tile_polygon_ea`.
+    `gdf` must already be in the equal-area CRS."""
+    if len(gdf) == 0:
+        return gdf
     mask = gdf.geometry.centroid.within(tile_polygon_ea)
     return gdf[mask].reset_index(drop=True)
 
 
-def _tile_footprint_ea(tile: mercantile.Tile,
-                       equal_area_epsg: int) -> Any:
-    """Return the tile bbox as a shapely polygon in the equal-area CRS.
-
-    Reprojects the WGS84 tile bounds through a one-off GeoDataFrame so
-    the polygon uses the same projection pipeline that pyproj/geopandas
-    apply everywhere else (avoids drift from ad-hoc pyproj Transformer
-    calls).
-    """
+def _tile_footprint_ea(tile: mercantile.Tile, equal_area_epsg: int) -> Any:
     w, s, e, n = _tile_bounds_wgs84(tile)
     box_gdf = gpd.GeoDataFrame(geometry=[box(w, s, e, n)], crs="EPSG:4326")
     return box_gdf.to_crs(f"EPSG:{equal_area_epsg}").geometry.iloc[0]
 
 
 def _safe_call(fn, *args, metric_name: str, **kwargs) -> tuple[Any, str, str]:
-    """Invoke a metric function; return (value, status, note).
-
-    - ok / value                -> (value, "ok", "")
-    - NotImplementedError       -> (NaN or {}, "not_implemented", exc msg)
-    - any other exception       -> (NaN or {}, "error", traceback)
-
-    The harness does not swallow errors silently: unknown exceptions
-    are recorded so a subtle bug (bad CRS, empty GeoDataFrame edge
-    case) is visible in the parquet.
-    """
     try:
         val = fn(*args, **kwargs)
         return val, "ok", ""
     except NotImplementedError as e:
-        return float("nan"), "not_implemented", f"{metric_name}: {e!s}"
+        return None, "not_implemented", f"{metric_name}: {e!s}"
     except Exception as e:  # noqa: BLE001
-        return float("nan"), "error", f"{metric_name}: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return None, "error", (
+            f"{metric_name}: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        )
 
 
-def _rows_for_dict(base: dict, prefix: str, val: Any, status: str, note: str) -> list[dict]:
-    """Expand a dict-returning metric into one row per key."""
-    if isinstance(val, dict):
-        out = []
-        for k, v in val.items():
-            row = dict(base)
-            row["metric"] = f"{prefix}.{k}"
-            row["value"] = float("nan") if v is None else float(v) if not isinstance(v, (int | float)) else float(v)
-            row["status"] = status
-            row["note"] = note
-            out.append(row)
-        return out
+def _row(base: dict, metric: str, value: Any, status: str, note: str) -> dict:
     row = dict(base)
-    row["metric"] = prefix
-    row["value"] = float("nan") if val is None else (float(val) if isinstance(val, (int | float)) else float("nan"))
+    row["metric"] = metric
+    if value is None:
+        row["value"] = float("nan")
+    elif isinstance(value, (int | float)):
+        v = float(value)
+        row["value"] = float("nan") if math.isinf(v) else v
+    else:
+        row["value"] = float("nan")
     row["status"] = status
     row["note"] = note
-    return [row]
+    return row
+
+
+def _dict_rows(base: dict, prefix: str, val: Any, status: str, note: str) -> list[dict]:
+    if isinstance(val, dict):
+        return [_row(base, f"{prefix}.{k}", v, status, note) for k, v in val.items()]
+    return [_row(base, prefix, val, status, note)]
+
+
+def _pred_mask_for_tile(cfg: EvalConfig,
+                       tile: mercantile.Tile,
+                       tile_poly_ea,
+                       pred_gdf_ea: gpd.GeoDataFrame) -> np.ndarray:
+    """Return a boolean HxW array on the equal-area grid derived from
+    the tile bounds + cfg.pixel_resolution_m.
+
+    Preference order:
+        1. Raw model mask at <work_dir>/masks/<z>/<x>/<y>.png (or .tif),
+           reprojected via rasterio into the equal-area grid.
+        2. Rasterisation of `pred_gdf_ea` clipped to the tile footprint
+           (centre-only snapping, so pixel_iou remains consistent with
+           the reference rasterisation done inside the metric).
+    """
+    left, bottom, right, top = tile_poly_ea.bounds
+    p = cfg.pixel_resolution_m
+    width  = int(round((right - left) / p))
+    height = int(round((top - bottom) / p))
+    if width <= 0 or height <= 0:
+        return np.zeros((max(1, height), max(1, width)), dtype=bool)
+
+    mask_dir = cfg.work_dir / "masks"
+    mask_paths = [
+        mask_dir / str(tile.z) / str(tile.x) / f"{tile.y}.png",
+        mask_dir / str(tile.z) / str(tile.x) / f"{tile.y}.tif",
+    ]
+    src_path = next((p for p in mask_paths if p.is_file()), None)
+    if src_path is not None:
+        return _reproject_mask_to_ea(src_path, cfg, left, bottom, right, top,
+                                     height, width)
+
+    # Fallback: rasterise predicted vectors clipped to the tile.
+    dst_transform = _rio_transform_from_bounds(left, bottom, right, top,
+                                               width, height)
+    if len(pred_gdf_ea) == 0:
+        return np.zeros((height, width), dtype=bool)
+    pred_clip = _clip_by_centroid(pred_gdf_ea, tile_poly_ea)
+    if len(pred_clip) == 0:
+        return np.zeros((height, width), dtype=bool)
+    shapes = [(g, 1) for g in pred_clip.geometry if g is not None and not g.is_empty]
+    if not shapes:
+        return np.zeros((height, width), dtype=bool)
+    mask = _rasterize(shapes, out_shape=(height, width),
+                      transform=dst_transform, fill=0,
+                      all_touched=False, dtype="uint8")
+    return mask.astype(bool)
+
+
+def _reproject_mask_to_ea(src_path: Path, cfg: EvalConfig,
+                          left: float, bottom: float, right: float, top: float,
+                          height: int, width: int) -> np.ndarray:
+    ea_crs = f"EPSG:{cfg.equal_area_epsg}"
+    dst = np.zeros((height, width), dtype=np.uint8)
+    dst_transform = _rio_transform_from_bounds(left, bottom, right, top,
+                                               width, height)
+    with rasterio.open(src_path) as src:
+        src_band = src.read(1)
+        # Some upstream tile writers emit a paletted PNG; treat any
+        # nonzero value as "building".
+        reproject(
+            source=(src_band != 0).astype(np.uint8),
+            destination=dst,
+            src_transform=src.transform, src_crs=src.crs,
+            dst_transform=dst_transform, dst_crs=ea_crs,
+            resampling=Resampling.nearest,
+        )
+    return dst.astype(bool)
+
+
+def _density_and_area_columns(tile_poly_ea, ref_gdf_ea: gpd.GeoDataFrame,
+                              ref_centroids_ea: gpd.GeoSeries) -> dict[str, float]:
+    """Per-tile ref-area and multi-window density columns."""
+    # Reference polygons whose centroid is inside the tile:
+    inside_mask = ref_centroids_ea.within(tile_poly_ea)
+    inside = ref_gdf_ea[inside_mask]
+    if len(inside) > 0:
+        med_area = float(inside.geometry.area.median())
+    else:
+        med_area = float("nan")
+
+    out = {"median_ref_area_m2": med_area}
+    tc = tile_poly_ea.centroid
+    for w in DENSITY_WINDOWS_M:
+        window = tc.buffer(w)
+        n = int(ref_centroids_ea.within(window).sum())
+        area_ha = float(window.area / 1e4)
+        density = n / area_ha if area_ha > 0 else float("nan")
+        out[f"ref_density_per_ha_w{int(w)}"] = float(density)
+    # Convenience alias for the default window used by figures:
+    out["ref_density_per_ha"] = out[f"ref_density_per_ha_w{int(DEFAULT_DENSITY_WINDOW_M)}"]
+    return out
 
 
 def _evaluate_tile(tile: mercantile.Tile,
                    pred_gdf_ea: gpd.GeoDataFrame,
                    ref_gdf_ea:  gpd.GeoDataFrame,
+                   ref_centroids_ea: gpd.GeoSeries,
                    aoi_name: str,
                    cfg: EvalConfig) -> list[dict]:
-    """Compute every metric on one tile. Returns a list of tidy rows."""
     tile_poly_ea = _tile_footprint_ea(tile, cfg.equal_area_epsg)
     pred_tile = _clip_by_centroid(pred_gdf_ea, tile_poly_ea)
     ref_tile  = _clip_by_centroid(ref_gdf_ea,  tile_poly_ea)
+
+    enrich = _density_and_area_columns(tile_poly_ea, ref_gdf_ea, ref_centroids_ea)
 
     base = {
         "aoi": aoi_name,
         "tile_z": tile.z, "tile_x": tile.x, "tile_y": tile.y,
         "n_pred": len(pred_tile),
         "n_ref":  len(ref_tile),
+        **enrich,
     }
 
     rows: list[dict] = []
 
-    match_val, match_status, match_note = _safe_call(
-        match_instances, pred_tile, ref_tile, cfg.iou_threshold,
-        metric_name="match_instances",
-    )
-    # `match_instances` returns a MatchResult (not a scalar); we record
-    # only the status here. Downstream metrics that consume MatchResult
-    # use the successful result if available, else a fallback empty one
-    # so the pipeline still exercises them and reports their own status.
-    row = dict(base)
-    row["metric"] = "match_instances.status"
-    row["value"] = float("nan")
-    row["status"] = match_status
-    row["note"] = match_note
-    rows.append(row)
+    # -- reserved stubs: just record NotImplementedError
+    for name, fn in (
+        ("match_instances", lambda: match_instances(pred_tile, ref_tile, cfg.iou_threshold)),
+    ):
+        _, s, note = _safe_call(lambda: fn(), metric_name=name)  # noqa: B023
+        rows.append(_row(base, f"{name}.status", None, s, note))
 
-    # Fall through with a placeholder MatchResult so downstream metrics
-    # still run and report their own status (this makes NotImplementedError
-    # visible for e.g. instance_prf even when match_instances is also
-    # unimplemented).
     from bfbench.metrics.instance import MatchResult  # noqa: PLC0415
-    mr = match_val if match_status == "ok" else MatchResult()
+    mr = MatchResult()
+    for name, fn in (
+        ("instance_prf", lambda: instance_prf(mr)),
+        ("merge_rate",   lambda: merge_rate(mr)),
+        ("split_rate",   lambda: split_rate(mr)),
+        ("boundary_distance", lambda: boundary_distance(mr)),
+    ):
+        val, s, note = _safe_call(lambda: fn(), metric_name=name)  # noqa: B023
+        rows += _dict_rows(base, name, val, s, note)
 
-    prf_val, prf_status, prf_note = _safe_call(
-        instance_prf, mr, metric_name="instance_prf",
-    )
-    rows += _rows_for_dict(base, "instance_prf", prf_val, prf_status, prf_note)
+    # -- implemented: count_error
+    ce_val, ce_s, ce_note = _safe_call(count_error, pred_tile, ref_tile,
+                                       metric_name="count_error")
+    rows += _dict_rows(base, "count_error", ce_val, ce_s, ce_note)
 
-    for name, fn in (("merge_rate", merge_rate),
-                     ("split_rate", split_rate)):
-        v, s, note = _safe_call(fn, mr, metric_name=name)
-        row = dict(base)
-        row["metric"] = name
-        row["value"] = float("nan") if not isinstance(v, (int | float)) else float(v)
-        row["status"] = s
-        row["note"] = note
-        rows.append(row)
-
-    ce_val, ce_status, ce_note = _safe_call(
-        count_error, pred_tile, ref_tile, metric_name="count_error",
-    )
-    rows += _rows_for_dict(base, "count_error", ce_val, ce_status, ce_note)
-
-    b = tile_poly_ea.bounds
-    piv, piv_status, piv_note = _safe_call(
-        pixel_iou, pred_tile, ref_tile,
-        bounds=b, resolution=cfg.pixel_resolution_m,
-        metric_name="pixel_iou",
-    )
-    row = dict(base)
-    row["metric"] = "pixel_iou"
-    row["value"] = float("nan") if not isinstance(piv, (int | float)) else float(piv)
-    row["status"] = piv_status
-    row["note"] = piv_note
-    rows.append(row)
-
-    bd_val, bd_status, bd_note = _safe_call(
-        boundary_distance, mr, metric_name="boundary_distance",
-    )
-    rows += _rows_for_dict(base, "boundary_distance", bd_val, bd_status, bd_note)
-
-    # Numerical hygiene: NaN is fine, but +inf or -inf turns downstream
-    # aggregates into all-NaN. Never smuggle those into the parquet.
-    for r in rows:
-        if isinstance(r["value"], float) and math.isinf(r["value"]):
-            r["value"] = float("nan")
-            r["status"] = "error"
-            r["note"] = (r.get("note", "") + " [infinity replaced with NaN]").strip()
+    # -- implemented: pixel_iou at both snappings (default centre-only + sensitivity)
+    pred_mask = _pred_mask_for_tile(cfg, tile, tile_poly_ea, pred_gdf_ea)
+    for label, all_touched in (("pixel_iou", False),
+                               ("pixel_iou_all_touched", True)):
+        iou_val, iou_s, iou_note = _safe_call(
+            pixel_iou, pred_mask, ref_tile,
+            bounds=tile_poly_ea.bounds,
+            resolution=cfg.pixel_resolution_m,
+            all_touched=all_touched,
+            metric_name=label,
+        )
+        rows.append(_row(base, label, iou_val, iou_s, iou_note))
 
     return rows
 
@@ -292,18 +338,14 @@ def _read_ref_gdf(work_dir: Path, ea_crs: str) -> gpd.GeoDataFrame:
 
 
 def _synth_predictions(ref_gdf_ea: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Cheap smoke-mode predictions: duplicate the reference but nudged
-    a few metres to the east. Guarantees exercise of match_instances +
-    downstream code without needing a real inference run.
-    """
+    """Cheap smoke-mode: duplicate the reference but shift 2 m east."""
     shifted = ref_gdf_ea.copy()
     shifted["geometry"] = shifted.geometry.translate(xoff=2.0, yoff=0.0)
     return shifted
 
 
 def evaluate(cfg_path: Path,
-             *,
-             synthetic_predictions: bool = False) -> Path:
+             *, synthetic_predictions: bool = False) -> Path:
     """Run the harness. Returns the path to the tidy Parquet."""
     logging.basicConfig(
         level=logging.INFO,
@@ -316,6 +358,7 @@ def evaluate(cfg_path: Path,
 
     tiles, sample_payload = _read_sampled_tiles(cfg.work_dir)
     ref_gdf_ea = _read_ref_gdf(cfg.work_dir, ea_crs)
+    ref_centroids_ea = ref_gdf_ea.geometry.centroid
     pred_gdf_ea = (
         _synth_predictions(ref_gdf_ea) if synthetic_predictions
         else _read_pred_gdf(cfg.work_dir, ea_crs)
@@ -334,7 +377,7 @@ def evaluate(cfg_path: Path,
             rows = json.loads(stage.read_text(encoding="utf-8"))
         else:
             rows = _evaluate_tile(tile, pred_gdf_ea, ref_gdf_ea,
-                                  cfg.aoi_name, cfg)
+                                  ref_centroids_ea, cfg.aoi_name, cfg)
             stage.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         all_rows.extend(rows)
         if (i + 1) % 25 == 0:
@@ -350,6 +393,7 @@ def evaluate(cfg_path: Path,
         "equal_area_epsg": cfg.equal_area_epsg,
         "iou_threshold": cfg.iou_threshold,
         "pixel_resolution_m": cfg.pixel_resolution_m,
+        "density_windows_m": list(DENSITY_WINDOWS_M),
         "sample_seed": sample_payload["seed"],
         "sample_hash": sample_payload["tile_ids_hash"],
         "n_tiles": len(tiles),
@@ -364,11 +408,9 @@ def evaluate(cfg_path: Path,
         json.dumps(manifest, indent=2), encoding="utf-8",
     )
     _LOG.info("wrote %s (%d rows: ok=%d, not_implemented=%d, error=%d)",
-              out, manifest["n_rows"],
-              manifest["n_metrics_ok"],
-              manifest["n_metrics_not_implemented"],
-              manifest["n_metrics_error"])
+              out, manifest["n_rows"], manifest["n_metrics_ok"],
+              manifest["n_metrics_not_implemented"], manifest["n_metrics_error"])
     return out
 
 
-__all__ = ["EvalConfig", "evaluate", "DEFAULT_EQUAL_AREA_EPSG"]
+__all__ = ["EvalConfig", "evaluate", "DENSITY_WINDOWS_M"]

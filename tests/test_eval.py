@@ -116,22 +116,33 @@ def test_eval_runs_end_to_end_with_stub_metrics(tmp_path):
                 "status", "note", "n_pred", "n_ref"):
         assert col in df.columns, f"missing column {col!r}: {df.columns.tolist()}"
 
-    # On clean checkout every metric raises NotImplementedError, so
-    # dict-returning metrics collapse to one placeholder row each.
-    # 3 tiles x 7 metric families -> 21 rows. Once the stubs are
-    # implemented dict-returning metrics expand and this rises.
-    assert len(df) >= 21, f"expected >= 21 rows on stubbed eval, got {len(df)}"
+    # Phase 3: pixel_iou, count_error and their enrichment run.
+    # match_instances / instance_prf / merge_rate / split_rate /
+    # boundary_distance are still stubs and must be marked
+    # not_implemented.
+    assert len(df) >= 21, f"expected >= 21 rows, got {len(df)}"
     assert (df["aoi"] == "TEST_AOI").all()
 
-    # Because the metric functions are all stubs, at least the
-    # non-precondition ones should be marked not_implemented.
-    ni_metrics = set(df.loc[df["status"] == "not_implemented", "metric"])
-    for expected in ("match_instances.status", "merge_rate", "split_rate",
-                     "pixel_iou"):
-        assert expected in ni_metrics, (
+    ni = set(df.loc[df["status"] == "not_implemented", "metric"])
+    for expected in ("match_instances.status", "merge_rate", "split_rate"):
+        assert expected in ni, (
             f"expected {expected} to be status='not_implemented' on clean "
-            f"checkout, got {sorted(ni_metrics)}"
+            f"checkout, got {sorted(ni)}"
         )
+
+    ok = set(df.loc[df["status"] == "ok", "metric"])
+    for expected in ("pixel_iou", "pixel_iou_all_touched",
+                     "count_error.abs_error", "count_error.signed_error"):
+        assert expected in ok, (
+            f"expected {expected} to be status='ok' on Phase 3 harness, "
+            f"got {sorted(ok)}"
+        )
+
+    # Enrichment columns present:
+    for col in ("median_ref_area_m2",
+                "ref_density_per_ha_w100", "ref_density_per_ha_w200",
+                "ref_density_per_ha_w500", "ref_density_per_ha"):
+        assert col in df.columns, f"missing enrichment col {col!r}"
 
 
 def test_eval_synthetic_predictions_works_without_predicted_geojson(tmp_path):
@@ -155,10 +166,16 @@ def test_eval_is_resumable(tmp_path):
     assert len(stages) == 3, f"expected 3 staged tiles, got {len(stages)}"
 
     # Corrupt one stage file to a specific marker; re-run should NOT
-    # re-evaluate it (it uses the cache).
+    # re-evaluate it (it uses the cache). Include the enrichment
+    # columns so pandas doesn't infer a mixed-dtype union badly.
     stages[0].write_text('[{"aoi":"TEST_AOI","tile_z":0,"tile_x":0,"tile_y":0,'
                         '"metric":"CACHED_MARKER","value":42.0,"status":"ok",'
-                        '"note":"","n_pred":0,"n_ref":0}]')
+                        '"note":"","n_pred":0,"n_ref":0,'
+                        '"median_ref_area_m2":0.0,'
+                        '"ref_density_per_ha_w100":0.0,'
+                        '"ref_density_per_ha_w200":0.0,'
+                        '"ref_density_per_ha_w500":0.0,'
+                        '"ref_density_per_ha":0.0}]')
     _ = evaluate(cfg_path)
     df = pd.read_parquet(work_dir / "eval" / "results.parquet")
     assert (df["metric"] == "CACHED_MARKER").any(), (

@@ -19,6 +19,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# Ensure GDAL / PROJ can find their data files when running the CLI without
+# an activated conda env. Without these, in-process rasterio.warp calls can
+# segfault silently (returning exit code 127 on Windows).
+if os.name == "nt":
+    _prefix = Path(sys.prefix)
+    os.environ.setdefault("GDAL_DATA", str(_prefix / "Library" / "share" / "gdal"))
+    os.environ.setdefault("PROJ_LIB", str(_prefix / "Library" / "share" / "proj"))
+    _lib_bin = _prefix / "Library" / "bin"
+    if _lib_bin.is_dir() and str(_lib_bin) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = str(_lib_bin) + os.pathsep + os.environ.get("PATH", "")
+
 import typer
 import yaml
 
