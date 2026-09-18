@@ -104,8 +104,14 @@ def build_vrt(chip_paths: list[Path], out_vrt: Path,
     native_crs = next(iter(crss))
 
     gdalbuildvrt = _resolve_gdalbuildvrt()
-    args = [gdalbuildvrt, "-r", resampling, "-overwrite", str(out_vrt)]
-    args += [str(p) for p in chip_paths]
+    # Windows caps command-line length at ~8k characters; passing 800+
+    # chip paths inline exceeds that. Use -input_file_list to pass the
+    # chip list via a temporary file instead.
+    file_list = out_vrt.with_suffix(".chips.txt")
+    file_list.write_text("\n".join(str(p) for p in chip_paths) + "\n",
+                         encoding="utf-8")
+    args = [gdalbuildvrt, "-r", resampling, "-overwrite",
+            "-input_file_list", str(file_list), str(out_vrt)]
     _LOG.info("gdalbuildvrt %s -> %s (%d chips) using %s",
               resampling, out_vrt, len(chip_paths), gdalbuildvrt)
     # Ensure GDAL_DATA is populated so gdalbuildvrt can find PROJ / VRT
