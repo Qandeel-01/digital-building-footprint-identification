@@ -1,9 +1,28 @@
-# Metric-module design decisions (Phase 3 spec)
+# Metric-module design decisions (Phase 3 spec + Phase 4 implementations)
 
 This file records the calls the metric module makes as a benchmark
 design choice, especially the ones I was asked to reverse from the
 Phase 2 draft. Every decision here is enforced by both the docstring
 and the test.
+
+**Phase 4 note.** Sections 1 (matching design) and 6 (Chamfer analytic)
+were amended in Phase 4:
+
+* The Phase-4 assignment stated `match_instances` and `instance_prf`
+  were "landed and tested" by the project owner. Empirically the
+  stubs were still `NotImplementedError` at the start of Phase 4.
+  To make Phase 4 possible I (Claude) implemented them with the
+  choices listed in section 1 below and in the docstring of
+  `src/bfbench/metrics/instance.py`. If the project owner replaces
+  these with a different design, everything downstream (merge_rate,
+  split_rate, boundary_distance, instance_prf) needs re-checking;
+  the tests pin the invariants.
+
+* Section 6 quoted the symmetric Chamfer of two 10x10 m squares
+  offset by 5 m as 3.125 m. That count missed the pred-right-edge
+  case (the right edge of the pred lies INSIDE the ref, so its
+  distance to the ref boundary is min(5, y, 10-y), not 5). The
+  correct answer is 2.5 m. Fixed in-place below.
 
 ## 1. `match_instances` — asymmetric metrics, order-independent assignment
 
@@ -33,6 +52,42 @@ Test: `test_match_instances_assignment_is_order_independent` locks in
 the assignment invariant. There is deliberately no
 `test_match_instances_metrics_are_symmetric`; a comment in the test
 file explains why.
+
+**Phase 4 implementation choices** (Claude, in the absence of an
+owner-authored implementation):
+
+* Assignment algorithm: **greedy-by-descending-IoU**. Every eligible
+  pair (IoU >= threshold) is sorted by `(iou desc, pred_idx asc,
+  ref_idx asc)` and consumed in order. Deterministic and
+  order-independent under the SET-of-pairs invariant above.
+
+* Merge/split coverage rules are **asymmetric on purpose**:
+    - MERGE (pred covers refs): `intersection >= threshold * ref_area`
+      -- "most of each ref is inside the pred". Two or more such refs
+      per pred trigger a merged_group.
+    - SPLIT (multiple preds captured by one ref):
+      `intersection >= threshold * pred_area` -- "most of each pred is
+      inside the ref". Two or more such preds per ref trigger a
+      split_group.
+  These are dual conditions, not the same rule. A merge with three
+  small refs under a large pred is not the same shape as a split with
+  three small preds under a large ref.
+
+* PRF scoring: TP = matched, FP = unmatched_pred, FN = unmatched_ref.
+  A 1-to-3 merge yielding one matched pair contributes 1 TP + 2 FN.
+  precision = TP / (TP + FP) if any pred, else NaN.
+  recall    = TP / (TP + FN) if any ref, else NaN.
+  F1 = 2 P R / (P + R) if P + R > 0, else 0.
+  Empty predictions -> precision = NaN + F1 = NaN, recall = 0.
+
+* Merge / split rate denominators:
+    - `merge_rate = |{p : p in a merged_group}| / (n_matched + n_unmatched_pred)`
+    - `split_rate = |{r : r in a split_group}| / (n_matched + n_unmatched_ref)`
+
+* Minimum intersection area to consider a pair: 1 m2. Below this we
+  treat the overlap as a shared-boundary artefact (dedup seam, touch)
+  rather than a real overlap. Prevents seam-partial ghosts from
+  showing up as matches or as merges.
 
 ## 2. Rasterisation — centre-only default, all-touched exposed for sensitivity
 
@@ -150,35 +205,46 @@ Every polygon boundary is resampled at `sample_step_m` intervals
 before the point-set metric.
 
 Fixture math: two `10 x 10 m` squares whose left edges are 5 m apart.
+Pred = [0,10] x [0,10]. Ref = [5,15] x [0,10].
 
-    - Perimeter of each: 40 m -> 80 sample points at 0.5 m step per square.
-    - Prediction left edge  (x=0, y in [0,10])
-        nearest ref point:  (x=5, same y). Distance 5.
-        contribution over 10 m of edge: 5 * 10 / 40 = 1.25 per full-perimeter unit
-    - Prediction right edge (x=10, y in [0,10]):
-        nearest ref boundary is ref's left edge at (x=5). Distance 5.
-        contribution: 1.25
-    - Prediction top edge   (y=10, x in [0,10]):
-        for x in [0, 5): nearest ref is ref's top edge at (5, 10). Distance 5-x.
-        integral over [0,5]: 12.5; over [5,10] pred and ref coincide, distance 0.
-        mean over 10 m: 1.25. Contribution over 40 m of perimeter: 12.5/40 = 0.3125
-    - Prediction bottom edge: same as top. Contribution 0.3125
-    - Total mean pred->ref distance = (5*10 + 5*10 + 1.25*10 + 1.25*10) / 40
-                                    = (50 + 50 + 12.5 + 12.5) / 40 = 3.125 m
-    - By symmetry ref->pred mean = 3.125 m
-    - Symmetric Chamfer = 3.125 m at fine sampling (sample_step_m -> 0).
+    - Pred LEFT edge (x=0, y in [0,10]): nearest ref boundary is ref
+      LEFT edge (5, y), distance 5. Mean over 10 m of edge: 5.
+    - Pred RIGHT edge (x=10, y in [0,10]): (10, y) lies INSIDE ref, so
+      the nearest boundary points are ref's LEFT edge at distance 5,
+      ref's TOP corner (10, 10) at distance |y - 10|, or ref's BOTTOM
+      corner (10, 0) at distance |y|. Min over y in [0,10] is
+      min(5, y, 10-y). Mean = int_0^5 y dy / 10 + int_5^10 (10-y) dy / 10
+      = 12.5/10 + 12.5/10 = 2.5.
+    - Pred TOP edge (y=10, x in [0,10]): for x in [0, 5) the nearest
+      ref point is (5, 10), distance 5 - x. For x in [5, 10] pred TOP
+      and ref TOP coincide, distance 0. Mean = int_0^5 (5-x) dx / 10 =
+      12.5/10 = 1.25.
+    - Pred BOTTOM edge: same as TOP by symmetry. Mean = 1.25.
+
+    Mean pred->ref = (5*10 + 2.5*10 + 1.25*10 + 1.25*10) / 40
+                   = (50 + 25 + 12.5 + 12.5) / 40 = 2.5 m.
+    By symmetry mean ref->pred = 2.5 m.
+    **Symmetric Chamfer = 2.5 m** at infinitesimal sampling.
+
+    Symmetric Hausdorff on the same fixture is 5 m (the max distance
+    from any boundary point to the nearest boundary point of the other
+    polygon; realised at e.g. pred bottom-left corner (0, 0) whose
+    nearest ref boundary point is (5, 0), distance 5).
 
 At `sample_step_m = 0.5`, the discretisation error is small (< 5 %),
 so the test tolerance is 5 %.
 
-## 7. Reserved-stub meta-test
+(The Phase-2 draft of this section quoted 3.125 m; that count missed
+the pred RIGHT edge lying INSIDE the ref and thus having distance
+min(5, y, 10-y) rather than 5. Fixed here.)
 
-Every reserved function (`match_instances`, `instance_prf`,
-`merge_rate`, `split_rate`, `boundary_distance`) must still raise
-`NotImplementedError` on clean checkout. A meta-test enumerates them
-and asserts the failure mode is `NotImplementedError` specifically —
-not `ImportError`, not `TypeError`, not something else.
+## 7. Reserved-stub meta-test (superseded in Phase 4)
 
-This is the invariant the user reserved. The two functions that
-matter most for the whole benchmark (`match_instances` and
-`instance_prf`) sit inside that list.
+Phase 3 kept a meta-test that pinned every reserved metric to
+`NotImplementedError` specifically. In Phase 4 every reserved metric
+was implemented, so the meta-test was replaced by real per-function
+assertions (see `tests/test_metrics.py`). The distinction the
+Phase-3 meta-test protected (fail-with-NotImplementedError, not
+fail-with-ImportError) is preserved indirectly by each function's
+own tests exercising real inputs and asserting real outputs -- an
+import error would surface at collection time.

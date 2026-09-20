@@ -1,23 +1,20 @@
-"""Tests for the bfbench.metrics module (Phase 3 spec).
+"""Tests for the bfbench.metrics module (Phase 4).
 
-Design contract:
+Every function is implemented; every test asserts real behaviour.
 
-    * The FOUR functions implemented in Phase 3 -- pixel_iou,
-      count_error / count_error_aoi, stratify_by_area, and
-      stratify_by_density -- have real assertions and pass on clean
-      checkout. Expected values are computed by hand where possible.
+    * Matching-independent metrics (pixel_iou, count_error /
+      count_error_aoi, stratify_by_area, stratify_by_density) landed
+      in Phase 3 and are unchanged.
 
-    * The RESERVED stubs -- match_instances, instance_prf, merge_rate,
-      split_rate, boundary_distance -- still raise NotImplementedError.
-      A meta-test enumerates them and pins the failure mode as
-      NotImplementedError specifically. This is the invariant the
-      project owner reserved.
+    * Instance metrics (match_instances, instance_prf, merge_rate,
+      split_rate, boundary_distance) landed in Phase 4 (see
+      docs/metric-decisions.md for the choices made).
 
     * Symmetry is NOT asserted on instance-level metrics. Precision /
-      recall / merge / split are directional; the only symmetry
-      required is that the ASSIGNMENT (the set of matched pairs) is
+      recall / merge / split are directional; the only invariant is
+      that the ASSIGNMENT (the set of matched pairs) is
       order-independent. See docs/metric-decisions.md section 1 and
-      the test file comment on match_instances.
+      test_match_instances_assignment_is_order_independent below.
 """
 
 from __future__ import annotations
@@ -326,78 +323,147 @@ def test_stratify_by_density_filters_by_window_m_column():
 
 
 # ---------------------------------------------------------------------------
-# Reserved stubs: still NotImplementedError, and match_instances +
-# instance_prf must NOT have symmetry asserted (see spec section 1).
+# Instance-level metrics (Phase 4 implementations).
+#
+# The only symmetry invariant is at the ASSIGNMENT level, not at the
+# metric level -- precision, recall, merge_rate, split_rate are
+# asymmetric by design (see docs/metric-decisions.md section 1).
 # ---------------------------------------------------------------------------
 
-# NOTE (Phase 3 correction to the Phase 2 recommendation): we deliberately
-# do NOT test metric-level symmetry:
-#
-#     match_instances(A, B) vs match_instances(B, A) may produce
-#     different instance_prf outputs by design -- precision runs
-#     pred->ref, recall runs ref->pred, merge/split are asymmetric.
-#     Forcing metric-level symmetry would remove the ability to
-#     measure merge / split at all, which is the phenomenon this
-#     benchmark exists to study.
-#
-# The only invariant is that the ASSIGNMENT (the set {(p_idx, r_idx)} of
-# matched pairs) is order-independent. That test will be added when
-# match_instances is implemented; it cannot be written against a stub.
+def test_match_instances_identity_perfect_match():
+    """Identical pred and ref -> 1-to-1 matching, IoU 1.0 on each pair."""
+    polys = [_square(0.0, 0.0, 10.0),
+             _square(30.0, 0.0, 10.0)]
+    pred = _gdf(polys)
+    ref  = _gdf(polys)
+    mr = match_instances(pred, ref, iou_threshold=0.5)
+    assert len(mr.matched) == 2
+    for pi, ri, iou in mr.matched:
+        assert pi == ri
+        assert math.isclose(iou, 1.0, abs_tol=1e-9)
+    assert mr.unmatched_pred == []
+    assert mr.unmatched_ref == []
+    assert mr.merged_groups == []
+    assert mr.split_groups == []
 
-RESERVED = ("match_instances", "instance_prf", "merge_rate", "split_rate",
-            "boundary_distance")
 
-
-def test_reserved_stubs_fail_with_notimplemented_not_something_else():
-    """Meta-test: every reserved stub must raise NotImplementedError
-    specifically, not ImportError, not TypeError, not ValueError from
-    a precondition. If this fails, the failure surface has drifted."""
+def test_match_instances_no_overlap_all_unmatched():
     pred = _gdf([_square(0.0, 0.0, 10.0)])
-    ref  = _gdf([_square(0.0, 0.0, 10.0)])
-    mr   = MatchResult(matched=[(0, 0, 1.0)])
-    calls = [
-        ("match_instances",   lambda: match_instances(pred, ref, 0.5)),
-        ("instance_prf",      lambda: instance_prf(mr)),
-        ("merge_rate",        lambda: merge_rate(mr)),
-        ("split_rate",        lambda: split_rate(mr)),
-        ("boundary_distance", lambda: boundary_distance(mr)),
-    ]
-    for name, fn in calls:
-        try:
-            fn()
-        except NotImplementedError:
-            continue
-        except Exception as e:  # noqa: BLE001
-            pytest.fail(
-                f"{name}: expected NotImplementedError, got "
-                f"{type(e).__name__}: {e}"
-            )
-        else:
-            pytest.fail(f"{name}: expected NotImplementedError, got a return value")
+    ref  = _gdf([_square(100.0, 0.0, 10.0)])
+    mr = match_instances(pred, ref, iou_threshold=0.5)
+    assert mr.matched == []
+    assert mr.unmatched_pred == [0]
+    assert mr.unmatched_ref == [0]
 
 
-def test_reserved_stubs_are_all_in_the_reserved_list():
-    """If a new reserved stub is added, this test forces us to
-    remember the list."""
-    for name in RESERVED:
-        # Each name must be importable and callable.
-        from bfbench import metrics as m  # noqa: PLC0415
-        fn = getattr(m, name)
-        assert callable(fn), f"{name} not callable"
+def test_match_instances_below_threshold_not_matched():
+    """50 % overlap -> IoU = 1/3, below iou_threshold=0.5 -> unmatched."""
+    pred = _gdf([_square(0.0, 0.0, 10.0)])
+    ref  = _gdf([_square(5.0, 0.0, 10.0)])
+    mr = match_instances(pred, ref, iou_threshold=0.5)
+    assert mr.matched == []
+    assert mr.unmatched_pred == [0]
+    assert mr.unmatched_ref == [0]
 
 
-def test_match_instances_precondition_still_enforced():
-    """The equal-area assertion runs BEFORE the NotImplementedError
-    inside match_instances, so callers can't silently pass an
-    EPSG:4326 GeoDataFrame."""
+def test_match_instances_assignment_is_order_independent():
+    """docs/metric-decisions.md section 1 invariant. Two predictions
+    compete for one reference; assignment must not depend on which
+    GeoDataFrame is passed first (the two are related by swapping
+    pred/ref indices, so we test the ASSIGNMENT SET's equality)."""
+    poly = _square(0.0, 0.0, 10.0)
+    # Two identical predictions, one reference: only one can match.
+    a = _gdf([poly, poly])
+    b = _gdf([poly])
+    mr_ab = match_instances(a, b, iou_threshold=0.5)
+    mr_ba = match_instances(b, a, iou_threshold=0.5)
+    assert len(mr_ab.matched) == 1
+    assert len(mr_ba.matched) == 1
+    (pi_ab, ri_ab, _) = mr_ab.matched[0]
+    (pi_ba, ri_ba, _) = mr_ba.matched[0]
+    # Swapping the two arguments swaps the two indices; the SET of
+    # matched pairs is the same modulo swap.
+    assert (pi_ab, ri_ab) == (ri_ba, pi_ba)
+
+
+def test_match_instances_merge_group_1_to_3():
+    """One 30x30 pred fully containing three 10x10 refs.
+
+    Per-pair IoU is 100 / 900 = 1/9 = 0.111, so at any iou_threshold
+    > 0.11 the greedy match yields ZERO matched pairs (the big pred
+    is not a good IoU match for any single ref). The MERGE is still
+    detected because our merge rule (intersection >= threshold *
+    ref_area) is satisfied: intersection = 100 = ref_area, so any
+    threshold <= 1.0 counts this as coverage.
+
+    We assert the split of the metric surface between "IoU match" and
+    "coverage-based merger" explicitly.
+    """
+    big_pred = _square(0.0, 0.0, 30.0)
+    refs = [_square(0.0, 0.0, 10.0),
+            _square(15.0, 15.0, 10.0),
+            _square(20.0, 0.0, 10.0)]
+    mr = match_instances(_gdf([big_pred]), _gdf(refs), iou_threshold=0.5)
+
+    # No matched pair (IoU is only 1/9).
+    assert mr.matched == []
+    assert mr.unmatched_pred == [0]
+    assert set(mr.unmatched_ref) == {0, 1, 2}
+
+    # Merger IS detected.
+    assert len(mr.merged_groups) == 1
+    pi, cov = mr.merged_groups[0]
+    assert pi == 0
+    assert set(cov) == {0, 1, 2}
+
+
+def test_match_instances_merge_group_with_lower_threshold():
+    """Same fixture but with iou_threshold=0.1 -- now the pred matches
+    its highest-IoU ref (whichever wins the tie), and the merger is
+    still reported."""
+    big_pred = _square(0.0, 0.0, 30.0)
+    refs = [_square(0.0, 0.0, 10.0),
+            _square(15.0, 15.0, 10.0),
+            _square(20.0, 0.0, 10.0)]
+    mr = match_instances(_gdf([big_pred]), _gdf(refs), iou_threshold=0.1)
+    assert len(mr.matched) == 1
+    # Merger reported regardless.
+    assert len(mr.merged_groups) == 1
+
+
+def test_match_instances_split_group_3_to_1():
+    big_ref = _square(0.0, 0.0, 30.0)
+    preds = [_square(0.0, 0.0, 10.0),
+             _square(15.0, 15.0, 10.0),
+             _square(20.0, 0.0, 10.0)]
+    mr = match_instances(_gdf(preds), _gdf([big_ref]), iou_threshold=0.5)
+    # Per-pair IoU is 1/9; no matched pair. Split is still detected.
+    assert mr.matched == []
+    assert len(mr.split_groups) == 1
+    ri, cov = mr.split_groups[0]
+    assert ri == 0
+    assert set(cov) == {0, 1, 2}
+
+
+def test_match_instances_greedy_takes_higher_iou_first():
+    """One pred that overlaps two refs with different IoUs. Greedy
+    picks the higher-IoU ref."""
+    pred = _square(0.0, 0.0, 10.0)
+    r_high = _square(0.0, 0.0, 10.0)   # IoU 1.0
+    r_low  = _square(5.0, 0.0, 10.0)   # IoU 1/3
+    mr = match_instances(_gdf([pred]), _gdf([r_high, r_low]),
+                         iou_threshold=0.3)
+    assert mr.matched == [(0, 0, pytest.approx(1.0, abs=1e-9))]
+
+
+def test_match_instances_precondition_wrong_crs():
     pred = _gdf([_square(0.0, 0.0, 10.0)]).to_crs("EPSG:4326")
     ref  = _gdf([_square(0.0, 0.0, 10.0)]).to_crs("EPSG:4326")
     with pytest.raises(NonEqualAreaCRSError):
         match_instances(pred, ref, iou_threshold=0.5)
 
 
-def test_match_instances_iou_threshold_range():
-    """Range check runs BEFORE NotImplementedError."""
+def test_match_instances_precondition_iou_out_of_range():
     pred = _gdf([_square(0.0, 0.0, 10.0)])
     ref  = _gdf([_square(0.0, 0.0, 10.0)])
     with pytest.raises(ValueError):
@@ -406,6 +472,88 @@ def test_match_instances_iou_threshold_range():
         match_instances(pred, ref, iou_threshold=0.0)
 
 
+def test_instance_prf_perfect():
+    mr = MatchResult(matched=[(0, 0, 1.0), (1, 1, 1.0)],
+                     unmatched_pred=[], unmatched_ref=[])
+    r = instance_prf(mr)
+    assert math.isclose(r["precision"], 1.0, abs_tol=1e-9)
+    assert math.isclose(r["recall"],    1.0, abs_tol=1e-9)
+    assert math.isclose(r["f1"],        1.0, abs_tol=1e-9)
+
+
+def test_instance_prf_disjoint_zero():
+    mr = MatchResult(matched=[], unmatched_pred=[0], unmatched_ref=[0])
+    r = instance_prf(mr)
+    assert math.isclose(r["precision"], 0.0)
+    assert math.isclose(r["recall"],    0.0)
+    assert math.isclose(r["f1"],        0.0)
+
+
+def test_instance_prf_empty_predictions_precision_is_nan():
+    mr = MatchResult(matched=[], unmatched_pred=[], unmatched_ref=[0, 1, 2])
+    r = instance_prf(mr)
+    assert math.isnan(r["precision"])
+    assert math.isclose(r["recall"], 0.0)
+    assert math.isnan(r["f1"])
+
+
+def test_instance_prf_1_to_3_merge_yields_1tp_2fn():
+    """1-to-3 merge convention: 1 TP + 2 FN + 0 FP (see instance.py docstring)."""
+    mr = MatchResult(matched=[(0, 0, 0.8)],
+                     unmatched_pred=[],
+                     unmatched_ref=[1, 2],
+                     merged_groups=[(0, [0, 1, 2])])
+    r = instance_prf(mr)
+    assert math.isclose(r["precision"], 1.0, abs_tol=1e-9)
+    assert math.isclose(r["recall"],    1.0 / 3.0, abs_tol=1e-9)
+
+
+def test_merge_rate_and_split_rate():
+    """3 preds, 3 refs: pred 0 covers refs 0,1,2 (merger); pred 1
+    matches ref 3 hypothetically; pred 2 unmatched."""
+    mr = MatchResult(
+        matched=[(0, 0, 0.9)],
+        unmatched_pred=[1, 2],
+        unmatched_ref=[1, 2],
+        merged_groups=[(0, [0, 1, 2])],
+        split_groups=[],
+    )
+    # 3 preds total, 1 is a merger -> merge_rate = 1/3.
+    assert math.isclose(merge_rate(mr), 1.0 / 3.0, abs_tol=1e-9)
+    # 0 refs are splits -> split_rate = 0.
+    assert math.isclose(split_rate(mr), 0.0, abs_tol=1e-9)
+
+
+def test_merge_rate_zero_on_clean_1to1():
+    mr = MatchResult(matched=[(0, 0, 1.0)])
+    assert math.isclose(merge_rate(mr), 0.0)
+    assert math.isclose(split_rate(mr), 0.0)
+
+
 def test_boundary_distance_rejects_nonpositive_sample_step():
     with pytest.raises(ValueError):
         boundary_distance(MatchResult(), sample_step_m=0.0)
+
+
+def test_boundary_distance_two_offset_squares_chamfer_25m():
+    """Two 10x10 m squares whose left edges are 5 m apart.
+
+    Analytic derivation in docs/metric-decisions.md section 6:
+    symmetric Chamfer = 2.5 m, symmetric Hausdorff = 5 m at
+    infinitesimal sampling. At sample_step_m = 0.5 discretisation
+    error is < 5 %.
+    """
+    pred = _gdf([_square(0.0, 0.0, 10.0)])
+    ref  = _gdf([_square(5.0, 0.0, 10.0)])
+    mr = MatchResult(matched=[(0, 0, 1.0 / 3.0)])
+    r = boundary_distance(mr, sample_step_m=0.5,
+                          pred_gdf=pred, ref_gdf=ref)
+    assert math.isclose(r["mean_chamfer"], 2.5, rel_tol=0.05, abs_tol=0.2)
+    assert math.isclose(r["mean_hausdorff"], 5.0, rel_tol=0.05, abs_tol=0.3)
+
+
+def test_boundary_distance_empty_match_returns_nan():
+    r = boundary_distance(MatchResult(matched=[]), sample_step_m=0.5)
+    assert math.isnan(r["mean_chamfer"])
+    assert math.isnan(r["mean_hausdorff"])
+    assert r["n_pairs"] == 0.0
