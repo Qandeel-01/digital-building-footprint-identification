@@ -3,11 +3,22 @@
 Reproducible harness for benchmarking an open-source building-footprint
 detector (AlbuNet / U-Net + ResNet, trained on xBD) across multiple regions.
 
-> **Phase 1 scaffolding.** This repo currently sets up a verified baseline:
-> upstream pinned as a submodule, a working conda env, a SpaceNet-2 adapter,
-> and a one-command end-to-end run producing GeoJSON footprints. Evaluation
-> metrics (IoU, F1, instance matching, merge/split) are intentionally out of
-> scope for Phase 1 — those will be authored separately.
+> **Phase 3 vertical slice (Vegas).** Baseline scaffolding (Phase 1) +
+> multi-AOI data layer, metric spec, and evaluation harness (Phase 2) +
+> real predictions on real Vegas mosaicked tiles (Phase 3).
+>
+> The pipeline runs end-to-end on the Vegas per-AOI mosaic:
+> `bfbench prepare` → `bfbench run-prepared` → `bfbench eval`.
+>
+> Matching-independent metrics are implemented: `pixel_iou`, `count_error`
+> (per-tile), `count_error_aoi`, `stratify_by_area`, `stratify_by_density`.
+> The instance-level matching (`match_instances`, `instance_prf`) is
+> reserved for the project owner and stubbed — the whole benchmark rests
+> on their design.
+>
+> No headline performance number appears in this README; per-tile
+> results live in the eval Parquet and its manifests. Numbers here
+> would be premature until the matching functions are implemented.
 
 ## Provenance
 
@@ -36,7 +47,12 @@ python scripts/apply_upstream_patches.py
 pip install --no-deps -e ./external/abd/abd_model ./external/abd/abd_utils
 pip install --no-deps -e .
 python scripts/fetch_weights.py
-bfbench run configs/spacenet_vegas_sample.yaml
+
+# Phase 3 vertical slice (Vegas):
+python scripts/select_vegas_chips.py --n 800    # pick a compact 800-chip cluster
+bfbench prepare configs/spacenet_vegas.yaml     # download + mosaic + dedup + sample
+bfbench run-prepared configs/spacenet_vegas.yaml    # adapt + predict + vectorize + filter
+bfbench eval configs/spacenet_vegas.yaml            # per-tile metrics -> Parquet
 ```
 
 Upstream is vendored unchanged; one small patch is applied on top of the
@@ -70,6 +86,13 @@ Any performance number in this repo must be reproducible from a specific
 config + weight checksum + input dataset revision recorded in the run
 manifest. Upstream reports IoU 0.79 on xBD; that is their number on their
 data and does not appear here as ours.
+
+Headline performance numbers (F1, precision, recall, matching-IoU)
+are deliberately not printed anywhere in this README or in
+[`CONTRIBUTIONS.md`](CONTRIBUTIONS.md) until the instance-matching
+functions (`match_instances`, `instance_prf`) are implemented by the
+project owner. Per-tile pixel-IoU and count-error values live in the
+Parquet emitted by `bfbench eval`; consult those directly.
 
 ## License
 

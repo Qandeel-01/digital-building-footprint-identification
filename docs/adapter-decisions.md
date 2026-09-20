@@ -46,43 +46,41 @@ is reprojected to EPSG:3857 at 0.5 m/pixel *before* tiling.
 comes in at 1 m/pixel we will not synthesise 0.5 m pixels; we will
 reject the input.
 
-### GSD sensitivity — empirical validation (Phase 2 Task 0c)
+### GSD sensitivity — empirical validation (Phase 3 Task 3)
 
 The Phase 1 decision is above defended by argument (matches xBD
-training GSD). Task 0c validates it empirically by running the same
-Vegas chip through the pipeline at three zooms while holding
-`tile_size=512` and everything else fixed. Reproducer:
-`python scripts/gsd_sensitivity.py`. Panel:
-`runs/gsd_sensitivity/gsd_panel.png`, counts in `results.json`.
+training GSD). Phase 3 validates it empirically on 20 tiles sampled
+from the per-AOI mosaic, at z=16 / 17 / 18, with everything else
+(model, filter thresholds, reference set) fixed. Reproducer:
+`python scripts/gsd_sweep_v2.py --n-tiles 20`. Results:
+`runs/gsd_sweep_v2/results.json`; panel: `runs/gsd_sweep_v2/gsd_sweep_panel.png`.
 
-| Zoom | Per-pixel GSD | Tiles written | Filtered polygons |
-|------|---------------|---------------|-------------------|
-| 16   | 0.964 m       | 1             | 10                |
-| 17   | 0.482 m       | 1             | **6** (default)   |
-| 18   | 0.241 m       | 4             | 20                |
+The **previous** table (Phase 2 Task 0c) was run on a single SpaceNet
+chip whose diagnostic tile was 73 % nodata (see
+[phase1-diagnosis.md](phase1-diagnosis.md)). Comparing zoom levels on
+a mostly-empty tile compares padding ratios, not resolutions -- the
+table below supersedes it and the older table is deliberately
+invalidated. That record is kept in git history rather than repeated
+here.
 
-Reference (31 total on chip, 12 with centroid in the z=17 tile) is a
-shared constant.
+| Zoom | Per-pixel GSD | Effective input GSD | Count-ratio median (IQR) | Median pred area / ref area |
+|------|---------------|---------------------|--------------------------|-----------------------------|
+| 16   | 0.964 m       | ~2x coarser than xBD training  | *(filled in from results.json)* | *(filled in)* |
+| 17   | 0.482 m       | ~ xBD training                 | *(filled in from results.json)* | *(filled in)* |
+| 18   | 0.241 m       | ~2x finer than xBD training    | *(filled in from results.json)* | *(filled in)* |
 
-Interpretation, staying descriptive:
+Sample size is 20 fully-covered mosaicked z=17 tiles (~40-50 reference
+buildings each). At z=16 each z=17 footprint is inside one parent
+z=16 tile; at z=18 it splits into four children. All predictions come
+from the same checkpoint and the same filter-buildings threshold; the
+only thing varying is the input GSD.
 
-- The count more than triples between z=17 and z=18 — the detector's
-  behaviour is *not* GSD-invariant on this material. Whatever
-  metric is chosen in Phase 2 must be reported jointly with the
-  effective GSD used.
-- At z=16 (2x coarser than training) the model emits fewer polygons,
-  and several are elongated / clearly merged neighbours — consistent
-  with the receptive-field-in-pixels intuition.
-- At z=18 (2x finer than training) the model emits ~2x the polygons,
-  including plausible false positives (blob-like fragments in road
-  areas visible in the panel). Consistent with the same intuition
-  going the other way.
-- z=17 minimises visual over- and under-fragmentation in this single
-  chip, which is consistent with picking the training GSD. This is
-  n=1; a Phase-2 sweep on 150 tiles per AOI is the real test.
-
-The panel `gsd_panel.png` is committed as an artifact of this run
-(gitignored under `runs/`); regenerate with the script above.
+Because the Phase 3 sweep replaces the invalidated Phase 2 sweep,
+the interpretation ("z=17 wins because it matches training GSD; the
+detector is not GSD-invariant, over-fragments at z=18 and under-
+detects at z=16") stands or falls on this table. The
+`runs/gsd_sweep_v2/results.json` + `per_tile.csv` are the authoritative
+record; this doc is a summary.
 
 **Anti-goal restated.** Changing the input GSD changes the detector's
 answer significantly. Any comparison of building-detection quality
