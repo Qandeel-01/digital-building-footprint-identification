@@ -106,7 +106,9 @@ def _write_aoi_fixture(tmp_path: Path) -> Path:
     return cfg_path
 
 
-def test_eval_runs_end_to_end_with_stub_metrics(tmp_path):
+def test_eval_runs_end_to_end_all_metrics_live(tmp_path):
+    """Phase 4: every metric is implemented; nothing should be
+    'not_implemented' any more."""
     cfg_path = _write_aoi_fixture(tmp_path)
     out = evaluate(cfg_path)
     assert out.is_file()
@@ -116,27 +118,27 @@ def test_eval_runs_end_to_end_with_stub_metrics(tmp_path):
                 "status", "note", "n_pred", "n_ref"):
         assert col in df.columns, f"missing column {col!r}: {df.columns.tolist()}"
 
-    # Phase 3: pixel_iou, count_error and their enrichment run.
-    # match_instances / instance_prf / merge_rate / split_rate /
-    # boundary_distance are still stubs and must be marked
-    # not_implemented.
     assert len(df) >= 21, f"expected >= 21 rows, got {len(df)}"
     assert (df["aoi"] == "TEST_AOI").all()
 
-    ni = set(df.loc[df["status"] == "not_implemented", "metric"])
-    for expected in ("match_instances.status", "merge_rate", "split_rate"):
-        assert expected in ni, (
-            f"expected {expected} to be status='not_implemented' on clean "
-            f"checkout, got {sorted(ni)}"
-        )
-
     ok = set(df.loc[df["status"] == "ok", "metric"])
-    for expected in ("pixel_iou", "pixel_iou_all_touched",
-                     "count_error.abs_error", "count_error.signed_error"):
+    for expected in (
+        "pixel_iou", "pixel_iou_all_touched",
+        "count_error.abs_error", "count_error.signed_error",
+        "instance_prf.precision", "instance_prf.recall", "instance_prf.f1",
+        "merge_rate", "split_rate",
+        "boundary_distance.mean_chamfer", "boundary_distance.mean_hausdorff",
+    ):
         assert expected in ok, (
-            f"expected {expected} to be status='ok' on Phase 3 harness, "
+            f"expected {expected} to be status='ok' with all metrics live, "
             f"got {sorted(ok)}"
         )
+
+    # No 'not_implemented' rows should remain.
+    ni = df.loc[df["status"] == "not_implemented"]
+    assert ni.empty, (
+        f"unexpected not_implemented rows: {sorted(ni['metric'].unique())}"
+    )
 
     # Enrichment columns present:
     for col in ("median_ref_area_m2",
@@ -191,4 +193,7 @@ def test_eval_manifest_records_seed_and_hash(tmp_path):
                    .read_text(encoding="utf-8"))
     assert m["sample_seed"] == 12345
     assert m["sample_hash"] == "test-hash"
-    assert m["n_metrics_not_implemented"] > 0
+    # Phase 4: every metric is implemented, so nothing should be
+    # not_implemented. Success = all_ok, not "some stubbed".
+    assert m["n_metrics_not_implemented"] == 0
+    assert m["n_metrics_ok"] > 0

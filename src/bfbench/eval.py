@@ -272,23 +272,36 @@ def _evaluate_tile(tile: mercantile.Tile,
 
     rows: list[dict] = []
 
-    # -- reserved stubs: just record NotImplementedError
-    for name, fn in (
-        ("match_instances", lambda: match_instances(pred_tile, ref_tile, cfg.iou_threshold)),
-    ):
-        _, s, note = _safe_call(lambda: fn(), metric_name=name)  # noqa: B023
-        rows.append(_row(base, f"{name}.status", None, s, note))
-
+    # -- match_instances first; downstream metrics consume its result.
+    match_val, match_status, match_note = _safe_call(
+        match_instances, pred_tile, ref_tile, cfg.iou_threshold,
+        metric_name="match_instances",
+    )
+    rows.append(_row(base, "match_instances.status", None,
+                     match_status, match_note))
     from bfbench.metrics.instance import MatchResult  # noqa: PLC0415
-    mr = MatchResult()
+    mr = match_val if match_status == "ok" else MatchResult()
+    rows.append(_row(base, "match_instances.n_matched",
+                     float(len(mr.matched)), "ok", ""))
+    rows.append(_row(base, "match_instances.n_merged_groups",
+                     float(len(mr.merged_groups)), "ok", ""))
+    rows.append(_row(base, "match_instances.n_split_groups",
+                     float(len(mr.split_groups)), "ok", ""))
+
     for name, fn in (
         ("instance_prf", lambda: instance_prf(mr)),
         ("merge_rate",   lambda: merge_rate(mr)),
         ("split_rate",   lambda: split_rate(mr)),
-        ("boundary_distance", lambda: boundary_distance(mr)),
     ):
         val, s, note = _safe_call(lambda: fn(), metric_name=name)  # noqa: B023
         rows += _dict_rows(base, name, val, s, note)
+
+    bd_val, bd_status, bd_note = _safe_call(
+        boundary_distance, mr,
+        sample_step_m=0.5, pred_gdf=pred_tile, ref_gdf=ref_tile,
+        metric_name="boundary_distance",
+    )
+    rows += _dict_rows(base, "boundary_distance", bd_val, bd_status, bd_note)
 
     # -- implemented: count_error
     ce_val, ce_s, ce_note = _safe_call(count_error, pred_tile, ref_tile,
