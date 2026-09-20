@@ -27,7 +27,8 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `configs/spacenet_shanghai.yaml`               | Full-AOI benchmark config (Phase 2, Shanghai).                                               |
 | `configs/spacenet_khartoum.yaml`               | Full-AOI benchmark config (Phase 2, Khartoum).                                               |
 | `docs/environment-notes.md`                    | Every deviation from upstream requirements.txt, patch rationale, Windows NCCL note.          |
-| `docs/adapter-decisions.md`                    | Rationale for GSD resampling + tile size + border handling. Task 0c GSD sensitivity table.    |
+| `docs/adapter-decisions.md`                    | Rationale for GSD resampling + tile size + border handling. Phase 3 GSD sweep replaces Phase 2. |
+| `docs/metric-decisions.md`                     | Phase 3 spec calls (asymmetry, centre-only, raster pixel_iou, required window_m, ...).          |
 | `docs/reproduce.md`                            | From-clean-clone runbook.                                                                    |
 | `docs/phase1-diagnosis.md`                     | Task 0b: 6-vs-31 diagnosis with tile-scope denominator + nodata + prob-histogram evidence.    |
 | `docs/reference-data.md`                       | Dedup rules for merging chip geojson_buildings across seams (`touching_union` default).       |
@@ -43,16 +44,25 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `src/bfbench/data/sampling.py`                 | Deterministic seeded tile sampling (Task 1d).                                                |
 | `src/bfbench/data/summary.py`                  | Per-AOI descriptive stats (Task 1e).                                                         |
 | `src/bfbench/prepare.py`                       | `bfbench prepare`: fetch -> mosaic -> merge references -> sample tiles -> summarise.          |
-| `src/bfbench/metrics/*.py`                     | Metric STUBS with docstrings naming open decisions (Task 2). No implementations.              |
-| `src/bfbench/eval.py`                          | `bfbench eval`: per-tile metric harness writing tidy Parquet (Task 3).                        |
-| `src/bfbench/cli.py`                           | `bfbench run` / `verify` / `prepare` / `eval` -- config-driven pipeline orchestrator.        |
+| `src/bfbench/metrics/pixel.py`                 | `pixel_iou` (raster interface, centre-only default; Phase 3 implemented).                     |
+| `src/bfbench/metrics/count.py`                 | `count_error` per-tile + `count_error_aoi` aggregate (Phase 3 implemented).                   |
+| `src/bfbench/metrics/stratify.py`              | `stratify_by_area` / `stratify_by_density` (Phase 3 implemented, bootstrap CI).               |
+| `src/bfbench/metrics/instance.py`              | `match_instances` / `instance_prf` / `merge_rate` / `split_rate` -- RESERVED stubs.           |
+| `src/bfbench/metrics/boundary.py`              | `boundary_distance` -- RESERVED stub (depends on MatchResult).                                |
+| `src/bfbench/eval.py`                          | `bfbench eval`: per-tile metric harness writing tidy Parquet.                                 |
+| `src/bfbench/run_prepared.py`                  | `bfbench run-prepared`: adapt+predict+vectorize+filter on the mosaic + sampled tiles.         |
+| `src/bfbench/cli.py`                           | `bfbench run` / `run-prepared` / `verify` / `prepare` / `eval`.                               |
 | `scripts/fetch_weights.py`                     | Google Drive download of `neat-fullxview-epoch75` with SHA-256 pinning.                      |
 | `scripts/apply_upstream_patches.py`            | Idempotent applier for `patches/abd/*.patch` on top of the submodule SHA.                    |
 | `scripts/predict_local.py`                     | Single-GPU predict shim (uses upstream Albunet/SemSeg unchanged; skips DDP/NCCL).            |
 | `scripts/qa_figure.py`                         | 3-panel matplotlib sanity figure.                                                            |
 | `scripts/diagnose_phase1.py`                   | Task 0b reproducer for the 6-vs-31 finding.                                                  |
-| `scripts/gsd_sensitivity.py`                   | Task 0c reproducer for the GSD sweep (z=16/17/18).                                           |
+| `scripts/gsd_sensitivity.py`                   | Task 0c reproducer for the GSD sweep (Phase 2; INVALIDATED by Phase 3, kept for history).      |
+| `scripts/gsd_sweep_v2.py`                      | Phase 3 GSD sweep on 20 fully-covered mosaicked tiles (supersedes gsd_sensitivity).            |
 | `scripts/figures.py`                           | Figures driven by the eval Parquet; synthetic mode is unmistakably labeled FAKE (Task 4).    |
+| `scripts/qualitative_panels.py`                | Real-mode 3-panel figure for worst/median tile by count ratio.                                 |
+| `scripts/select_vegas_chips.py`                | Probe SpaceNet chip headers via /vsis3/ and pick a compact contiguous cluster.                 |
+| `scripts/diagnose_prepare.py`                  | Nodata + dedup diagnostic against a prepared work_dir.                                         |
 | `patches/abd/0001-fix-vectorize-syntax.patch`  | Fix upstream `SyntaxError` at vectorize.py:56 (present since 2020).                          |
 | `patches/abd/0002-fix-webcolors-css3-api.patch`| Modernize webcolors call (dropped constant CSS3_NAMES_TO_HEX).                               |
 | `patches/abd/0003-fix-tiles-from-dir-windows.patch` | Fix `tiles_from_dir` regex on Windows paths.                                            |
