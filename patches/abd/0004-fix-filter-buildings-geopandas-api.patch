@@ -4,7 +4,8 @@ Two API changes since upstream's pins:
 - geopandas 0.10 (2021) renamed sjoin's `op=` kwarg to `predicate=` and
   hard-deprecated the old name; geopandas 1.0 removed it.
 - pandas 2.0 (2023) removed DataFrame.append(); the replacement is
-  pd.concat([...], ignore_index=True).
+  pd.concat([...], ignore_index=True). This also needs a pandas
+  import at the top of the file, which upstream did not have.
 
 Pure API-swap patch; no behaviour change intended.
 
@@ -12,6 +13,12 @@ diff --git a/abd_utils/src/abd_utils/filter_buildings.py b/abd_utils/src/abd_uti
 index b15a0e0..d7559ed 100644
 --- a/abd_utils/src/abd_utils/filter_buildings.py
 +++ b/abd_utils/src/abd_utils/filter_buildings.py
+@@ -1,4 +1,5 @@
+ import geopandas as gpd
++import pandas as pd
+ import click
+ import math
+ from tqdm import tqdm
 @@ -23,31 +23,31 @@ def main(data, dest, crsmeters, waterbodies, area):
          list_gdfs = [gdf[x*SPLIT_SIZE:(x+1)*SPLIT_SIZE] for x in range(math.ceil(len(gdf)/SPLIT_SIZE))]
          gdf = gpd.GeoDataFrame()

@@ -370,6 +370,19 @@ def prepare(config_path: Path = _PREPARE_CONFIG_ARG) -> None:
     _prepare(config_path)
 
 
+@app.command("run-prepared")
+def run_prepared(config_path: Path = _PREPARE_CONFIG_ARG) -> None:
+    """Run adapt+predict+vectorize+filter on the prepared mosaic + sampled tiles.
+
+    Prefer this over `bfbench run` for Phase 3 vertical slices: it uses
+    the per-AOI mosaic built by `bfbench prepare` rather than adapting
+    each chip individually. Writes predicted.geojson into the work_dir.
+    """
+    from bfbench.run_prepared import run_prepared as _rp  # noqa: PLC0415
+    out = _rp(config_path)
+    typer.echo(f"predicted geojson: {out}")
+
+
 _EVAL_CONFIG_ARG = typer.Argument(..., exists=False, help="YAML AOI config.")
 _EVAL_SYNTH_OPT = typer.Option(
     False, "--synthetic-predictions",
