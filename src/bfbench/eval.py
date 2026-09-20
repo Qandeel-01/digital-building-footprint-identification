@@ -172,7 +172,8 @@ def _pred_mask_for_tile(cfg: EvalConfig,
     ]
     src_path = next((p for p in mask_paths if p.is_file()), None)
     if src_path is not None:
-        return _reproject_mask_to_ea(src_path, cfg, left, bottom, right, top,
+        return _reproject_mask_to_ea(src_path, cfg, tile,
+                                     left, bottom, right, top,
                                      height, width)
 
     # Fallback: rasterise predicted vectors clipped to the tile.
@@ -193,23 +194,35 @@ def _pred_mask_for_tile(cfg: EvalConfig,
 
 
 def _reproject_mask_to_ea(src_path: Path, cfg: EvalConfig,
+                          tile: mercantile.Tile,
                           left: float, bottom: float, right: float, top: float,
                           height: int, width: int) -> np.ndarray:
+    """Reproject a slippy-map PNG mask to the equal-area grid.
+
+    The PNGs written by `abd_model.tiles.tile_label_to_file` have no
+    embedded georeferencing; we synthesise the source transform from
+    the tile's Web-Mercator bounds and the mask's shape.
+    """
     ea_crs = f"EPSG:{cfg.equal_area_epsg}"
     dst = np.zeros((height, width), dtype=np.uint8)
     dst_transform = _rio_transform_from_bounds(left, bottom, right, top,
                                                width, height)
+    from bfbench.data.adapter import (  # noqa: PLC0415
+        WEBMERCATOR_EPSG,
+        tile_bounds_webmercator,
+    )
     with rasterio.open(src_path) as src:
         src_band = src.read(1)
-        # Some upstream tile writers emit a paletted PNG; treat any
-        # nonzero value as "building".
-        reproject(
-            source=(src_band != 0).astype(np.uint8),
-            destination=dst,
-            src_transform=src.transform, src_crs=src.crs,
-            dst_transform=dst_transform, dst_crs=ea_crs,
-            resampling=Resampling.nearest,
-        )
+    src_h, src_w = src_band.shape
+    tw, ts, te, tn = tile_bounds_webmercator(tile)
+    src_transform = _rio_transform_from_bounds(tw, ts, te, tn, src_w, src_h)
+    reproject(
+        source=(src_band != 0).astype(np.uint8),
+        destination=dst,
+        src_transform=src_transform, src_crs=f"EPSG:{WEBMERCATOR_EPSG}",
+        dst_transform=dst_transform, dst_crs=ea_crs,
+        resampling=Resampling.nearest,
+    )
     return dst.astype(bool)
 
 
