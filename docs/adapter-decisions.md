@@ -63,24 +63,49 @@ table below supersedes it and the older table is deliberately
 invalidated. That record is kept in git history rather than repeated
 here.
 
-| Zoom | Per-pixel GSD | Effective input GSD | Count-ratio median (IQR) | Median pred area / ref area |
-|------|---------------|---------------------|--------------------------|-----------------------------|
-| 16   | 0.964 m       | ~2x coarser than xBD training  | *(filled in from results.json)* | *(filled in)* |
-| 17   | 0.482 m       | ~ xBD training                 | *(filled in from results.json)* | *(filled in)* |
-| 18   | 0.241 m       | ~2x finer than xBD training    | *(filled in from results.json)* | *(filled in)* |
+| Zoom | Per-pixel GSD | Count-ratio (n_pred/n_ref) median (IQR) | Median pred area (m²) | Median ref area (m²) |
+|------|---------------|------------------------------------------|------------------------|-----------------------|
+| 16   | 0.964 m       | 0.57  (0.44, 0.61)                       | 574                    | 199                   |
+| 17   | 0.482 m       | **0.81  (0.67, 0.95)**                   | 332                    | 199                   |
+| 18   | 0.241 m       | 1.44  (1.31, 1.77)                       | 56                     | 199                   |
 
-Sample size is 20 fully-covered mosaicked z=17 tiles (~40-50 reference
-buildings each). At z=16 each z=17 footprint is inside one parent
-z=16 tile; at z=18 it splits into four children. All predictions come
-from the same checkpoint and the same filter-buildings threshold; the
-only thing varying is the input GSD.
+Sample size: n=20 fully-covered mosaicked z=17 tiles, median n_ref ≈
+41. Same reference set, same checkpoint, same filter-buildings
+threshold across zooms; the only varying input is the adapter's
+`target_gsd_m`. Raw per-tile records: `runs/gsd_sweep_v2/per_tile.csv`.
 
-Because the Phase 3 sweep replaces the invalidated Phase 2 sweep,
-the interpretation ("z=17 wins because it matches training GSD; the
-detector is not GSD-invariant, over-fragments at z=18 and under-
-detects at z=16") stands or falls on this table. The
-`runs/gsd_sweep_v2/results.json` + `per_tile.csv` are the authoritative
-record; this doc is a summary.
+Interpretation, staying descriptive:
+
+- **z=17 wins** on count ratio (median 0.81, IQR spans up to 0.95 --
+  the closest to 1.0 of the three) AND on typical predicted polygon
+  size (332 m² vs a 199 m² reference median -- a ~1.7 x inflation is
+  much closer to real building geometry than the alternatives).
+
+- At **z=16** (~2 x coarser than xBD training), the model badly
+  under-detects: median count ratio 0.57, and the predicted
+  polygons are 2.9 x larger than the reference median. That is
+  consistent with a receptive-field-in-pixels model merging
+  neighbouring buildings.
+
+- At **z=18** (~2 x finer than training), the model over-produces:
+  median count ratio 1.44 and predicted polygons are 3.6 x SMALLER
+  than the reference median. That is consistent with over-
+  fragmentation on the same buildings.
+
+- The z=17 IQR (0.67, 0.95) does not straddle 1.0 -- the model
+  systematically under-detects even at the training GSD by ~19 %.
+  That is a domain-gap signal, not a GSD signal, and it belongs in
+  the Phase-4 write-up (matching + F1) rather than in this table.
+
+The conclusion **stands**: 0.5 m/px (z=17 at Vegas latitude) is the
+right adapter default. Retiling to a different zoom is not worth the
+cost given the above.
+
+The Phase-2 GSD table in this same doc was RUN ON A CHIP THAT WAS
+73 % NODATA (see [phase1-diagnosis.md](phase1-diagnosis.md)); the
+numbers in it were comparing padding ratios, not resolutions, and are
+deliberately invalidated. That earlier record is kept in git history
+rather than repeated here.
 
 **Anti-goal restated.** Changing the input GSD changes the detector's
 answer significantly. Any comparison of building-detection quality
