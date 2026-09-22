@@ -65,9 +65,12 @@ def _polygons_in_tile(gdf_wgs: gpd.GeoDataFrame,
     return gdf_wgs.cx[b.west:b.east, b.south:b.north]
 
 
-def build_figure(parquet_path: Path, cfg_path: Path, out_path: Path) -> Path:
+def build_figure(parquet_path: Path, cfg_path: Path, out_path: Path,
+                 aoi_label: str | None = None) -> Path:
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     work_dir = Path(cfg["run"]["work_dir"])
+    if aoi_label is None:
+        aoi_label = cfg["aoi"]["name"]
 
     df = pd.read_parquet(parquet_path)
 
@@ -109,7 +112,7 @@ def build_figure(parquet_path: Path, cfg_path: Path, out_path: Path) -> Path:
                    f"{label}: reference   n_ref={int(row['n_ref'])}  "
                    f"ratio={row['count_ratio']:.2f}",
                    poly_edge="cyan", poly_fill=(0, 1, 1, 0.35))
-    fig.suptitle(f"Vegas qualitative panels -- worst and median tile by n_pred/n_ref",
+    fig.suptitle(f"{aoi_label} qualitative panels -- worst and median tile by n_pred/n_ref",
                  fontsize=12)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=140, bbox_inches="tight")
