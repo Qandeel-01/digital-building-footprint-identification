@@ -30,15 +30,31 @@ import pandas as pd  # noqa: E402
 
 
 def _pivot(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot the tidy long-format parquet into a per-tile wide table."""
+    """Pivot the tidy long-format parquet into a per-tile wide table.
+
+    `pivot_table` with a multi-column index drops rows where ANY index
+    column is NaN, which silently removes tiles with n_ref=0 (their
+    median_ref_area_m2 is NaN). We fill enrichment NaNs with sentinel
+    values before pivoting, then restore NaN after."""
     tile_cols = ["aoi", "tile_z", "tile_x", "tile_y", "n_pred", "n_ref",
                  "median_ref_area_m2",
                  "ref_density_per_ha_w100", "ref_density_per_ha_w200",
                  "ref_density_per_ha_w500", "ref_density_per_ha"]
     ok = df[df["status"] == "ok"].copy()
+    nan_sentinel = -1.0e30
+    for col in ("median_ref_area_m2",
+                "ref_density_per_ha_w100", "ref_density_per_ha_w200",
+                "ref_density_per_ha_w500", "ref_density_per_ha"):
+        if col in ok.columns:
+            ok[col] = ok[col].fillna(nan_sentinel)
     wide = ok.pivot_table(
         index=tile_cols, columns="metric", values="value", aggfunc="first",
     ).reset_index()
+    for col in ("median_ref_area_m2",
+                "ref_density_per_ha_w100", "ref_density_per_ha_w200",
+                "ref_density_per_ha_w500", "ref_density_per_ha"):
+        if col in wide.columns:
+            wide.loc[wide[col] == nan_sentinel, col] = float("nan")
     return wide
 
 

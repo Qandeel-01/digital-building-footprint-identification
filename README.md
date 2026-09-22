@@ -3,22 +3,17 @@
 Reproducible harness for benchmarking an open-source building-footprint
 detector (AlbuNet / U-Net + ResNet, trained on xBD) across multiple regions.
 
-> **Phase 3 vertical slice (Vegas).** Baseline scaffolding (Phase 1) +
-> multi-AOI data layer, metric spec, and evaluation harness (Phase 2) +
-> real predictions on real Vegas mosaicked tiles (Phase 3).
+> **Phase 4 -- multi-AOI results with all metrics implemented.**
+> Baseline scaffolding (Phase 1) + multi-AOI data layer, metric spec,
+> and evaluation harness (Phase 2) + Vegas vertical slice (Phase 3) +
+> four AOIs with instance-matching metrics (Phase 4).
 >
-> The pipeline runs end-to-end on the Vegas per-AOI mosaic:
+> The pipeline runs end-to-end per AOI:
 > `bfbench prepare` → `bfbench run-prepared` → `bfbench eval`.
 >
-> Matching-independent metrics are implemented: `pixel_iou`, `count_error`
-> (per-tile), `count_error_aoi`, `stratify_by_area`, `stratify_by_density`.
-> The instance-level matching (`match_instances`, `instance_prf`) is
-> reserved for the project owner and stubbed — the whole benchmark rests
-> on their design.
->
-> No headline performance number appears in this README; per-tile
-> results live in the eval Parquet and its manifests. Numbers here
-> would be premature until the matching functions are implemented.
+> Every headline number below is one row (or an aggregation of rows) in
+> `runs/<slug>_prepare/eval/results.parquet`. Full per-AOI breakdowns +
+> stratified CSVs live in [`docs/results.md`](docs/results.md).
 
 ## Provenance
 
@@ -48,11 +43,14 @@ pip install --no-deps -e ./external/abd/abd_model ./external/abd/abd_utils
 pip install --no-deps -e .
 python scripts/fetch_weights.py
 
-# Phase 3 vertical slice (Vegas):
-python scripts/select_vegas_chips.py --n 800    # pick a compact 800-chip cluster
-bfbench prepare configs/spacenet_vegas.yaml     # download + mosaic + dedup + sample
+# Per-AOI vertical slice (Vegas shown; substitute --aoi-id 3/4/5 + the
+# matching config for Paris/Shanghai/Khartoum):
+python scripts/select_chips.py --aoi-id 2 --n 800   # pick a compact 800-chip cluster
+bfbench prepare configs/spacenet_vegas.yaml         # download + mosaic + dedup + sample
 bfbench run-prepared configs/spacenet_vegas.yaml    # adapt + predict + vectorize + filter
 bfbench eval configs/spacenet_vegas.yaml            # per-tile metrics -> Parquet
+python scripts/aoi_summary.py runs/vegas_prepare/eval/results.parquet \
+    --out runs/vegas_prepare/eval/aoi_summary.json  # AOI micro-average P/R/F1
 ```
 
 Upstream is vendored unchanged; one small patch is applied on top of the
@@ -80,19 +78,27 @@ building-footprint-benchmark/
 └── CONTRIBUTIONS.md         # file-by-file: mine vs upstream
 ```
 
-## Reporting
+## Results
+
+Micro-averaged precision / recall / F1 across sampled tiles per AOI
+(IoU threshold 0.5, 800-chip cluster near AOI centroid, seed
+`20260911`). Every number here is regenerable from the corresponding
+Parquet via `scripts/aoi_summary.py`.
+
+| AOI            | n_tiles | precision | recall |   F1  | count_ratio | merge_rate |
+|----------------|--------:|----------:|-------:|------:|------------:|-----------:|
+| AOI_2_Vegas    |      43 |    0.510  | 0.373  | 0.431 |     0.730   |   0.163    |
+| AOI_3_Paris    |      64 |    0.290  | 0.272  | 0.281 |     0.938   |   0.049    |
+| AOI_4_Shanghai |      32 |    0.211  | 0.139  | 0.167 |     0.656   |   0.129    |
+| AOI_5_Khartoum |      18 |    0.259  | 0.143  | 0.184 |     0.550   |   0.190    |
+
+Full per-AOI table, stratified breakdowns and figures in
+[`docs/results.md`](docs/results.md).
 
 Any performance number in this repo must be reproducible from a specific
 config + weight checksum + input dataset revision recorded in the run
 manifest. Upstream reports IoU 0.79 on xBD; that is their number on their
 data and does not appear here as ours.
-
-Headline performance numbers (F1, precision, recall, matching-IoU)
-are deliberately not printed anywhere in this README or in
-[`CONTRIBUTIONS.md`](CONTRIBUTIONS.md) until the instance-matching
-functions (`match_instances`, `instance_prf`) are implemented by the
-project owner. Per-tile pixel-IoU and count-error values live in the
-Parquet emitted by `bfbench eval`; consult those directly.
 
 ## License
 

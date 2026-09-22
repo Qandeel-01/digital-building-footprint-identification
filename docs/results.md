@@ -35,9 +35,18 @@ not averaged tile-wise). Merge / split rate are per-tile means.
 | AOI              | n_tiles | n_pred | n_ref | precision | recall |  F1   | merge_rate | split_rate | count_ratio (n_pred / n_ref) |
 |------------------|--------:|-------:|------:|----------:|-------:|------:|-----------:|-----------:|------------------------------:|
 | AOI_2_Vegas      |      43 |   1481 |  2028 |    0.510  | 0.373  | 0.431 |   0.163    |   0.018    |                        0.730  |
+| AOI_3_Paris      |      64 |    700 |   746 |    0.290  | 0.272  | 0.281 |   0.049    |   0.005    |                        0.938  |
+| AOI_4_Shanghai   |      32 |    478 |   729 |    0.211  | 0.139  | 0.167 |   0.129    |   0.010    |                        0.656  |
 | AOI_5_Khartoum   |      18 |    448 |   814 |    0.259  | 0.143  | 0.184 |   0.190    |   0.020    |                        0.550  |
-| AOI_4_Shanghai   |  TBD    |        |       |           |        |       |            |            |                               |
-| AOI_3_Paris      |  TBD    |        |       |           |        |       |            |            |                               |
+
+Auxiliary per-tile statistics (median across the AOI's tiles):
+
+| AOI            | pixel_iou_median | Chamfer_median (m) |
+|----------------|-----------------:|-------------------:|
+| AOI_2_Vegas    |            0.625 |               1.40 |
+| AOI_3_Paris    |            0.462 |               1.43 |
+| AOI_4_Shanghai |            0.314 |               2.31 |
+| AOI_5_Khartoum |            0.439 |               1.70 |
 
 ## Stratified breakdowns
 
