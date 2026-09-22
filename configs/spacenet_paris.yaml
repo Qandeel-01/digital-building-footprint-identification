@@ -8,6 +8,7 @@ aoi:
   split: train
   image_kind: PS-RGB
   chip_limit: null
+  chip_ids_source: runs/paris_prepare/chip_selection.json
 
 adapter:
   target_gsd_m: 0.5
@@ -35,4 +36,8 @@ abd:
   metatiles: true
 
 run:
-  work_dir: runs/spacenet_paris
+  work_dir: runs/paris_prepare
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

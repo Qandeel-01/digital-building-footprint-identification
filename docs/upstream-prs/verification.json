@@ -1,0 +1,37 @@
+[
+  {
+    "patch": "0001-fix-vectorize-syntax.patch",
+    "pinned": false,
+    "patched": true,
+    "pinned_note": "import failed: SyntaxError: cannot use starred expression here",
+    "patched_note": "import abd_model.tools.vectorize -> OK"
+  },
+  {
+    "patch": "0002-fix-webcolors-css3-api.patch",
+    "pinned": false,
+    "patched": true,
+    "pinned_note": "AttributeError: module 'webcolors' has no attribute 'CSS3_NAMES_TO_HEX'",
+    "patched_note": "[0, 0, 0, 0, 128, 0]"
+  },
+  {
+    "patch": "0003-fix-tiles-from-dir-windows.patch",
+    "pinned": false,
+    "patched": true,
+    "pinned_note": "re.error: incomplete escape \\U at position 2",
+    "patched_note": "1 [Tile(x=42, y=68, z=17)]"
+  },
+  {
+    "patch": "0004-fix-filter-buildings-geopandas-api.patch",
+    "pinned": false,
+    "patched": true,
+    "pinned_note": "TypeError: sjoin() got an unexpected keyword argument 'op'",
+    "patched_note": "filter-buildings on 1200 polys -> OK"
+  },
+  {
+    "patch": "0005-single-gpu-predict-no-nccl.patch",
+    "pinned": false,
+    "patched": true,
+    "pinned_note": "--single-gpu NOT present",
+    "patched_note": "static check: --single-gpu present + assertion guarded"
+  }
+]

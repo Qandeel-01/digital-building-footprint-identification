@@ -8,6 +8,10 @@ aoi:
   split: train
   image_kind: PS-RGB
   chip_limit: null
+  # Same policy as Vegas (Phase 3 vertical slice): 800-chip cluster
+  # near AOI centroid, ~1.7-2.5 GB depending on chip size. Written by
+  # scripts/select_chips.py --aoi-id 5 --n 800.
+  chip_ids_source: runs/khartoum_prepare/chip_selection.json
 
 adapter:
   target_gsd_m: 0.5
@@ -35,4 +39,8 @@ abd:
   metatiles: true
 
 run:
-  work_dir: runs/spacenet_khartoum
+  work_dir: runs/khartoum_prepare
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5
