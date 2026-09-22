@@ -35,7 +35,7 @@ not averaged tile-wise). Merge / split rate are per-tile means.
 | AOI              | n_tiles | n_pred | n_ref | precision | recall |  F1   | merge_rate | split_rate | count_ratio (n_pred / n_ref) |
 |------------------|--------:|-------:|------:|----------:|-------:|------:|-----------:|-----------:|------------------------------:|
 | AOI_2_Vegas      |      43 |   1481 |  2028 |    0.510  | 0.373  | 0.431 |   0.163    |   0.018    |                        0.730  |
-| AOI_5_Khartoum   |  TBD    |        |       |           |        |       |            |            |                               |
+| AOI_5_Khartoum   |      18 |    448 |   814 |    0.259  | 0.143  | 0.184 |   0.190    |   0.020    |                        0.550  |
 | AOI_4_Shanghai   |  TBD    |        |       |           |        |       |            |            |                               |
 | AOI_3_Paris      |  TBD    |        |       |           |        |       |            |            |                               |
 
