@@ -127,8 +127,10 @@ def main() -> int:
     ref.plot(ax=axes[0], facecolor=(0, 1, 1, 0.30), edgecolor="cyan", linewidth=1.6)
     axes[0].set_title(f"SpaceNet reference ({len(ref)} polys)")
     for ax in axes:
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.set_xlim(extent[0], extent[1]); ax.set_ylim(extent[2], extent[3])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlim(extent[0], extent[1])
+        ax.set_ylim(extent[2], extent[3])
 
     for i, r in enumerate(results, start=1):
         gdf = gpd.read_file(r["geojson"]).to_crs(image_crs) if Path(r["geojson"]).exists() else \

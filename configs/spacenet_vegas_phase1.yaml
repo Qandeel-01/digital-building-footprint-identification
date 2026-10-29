@@ -1,0 +1,74 @@
+# Phase 1 config for AOI_2_Vegas: adds geographic block split +
+# fine-tuning section to the Phase 2/3 benchmark config.
+#
+# Reproducibility contract: (same YAML + same submodule SHA + same
+# source checkpoint sha256 + same seeds) -> byte-identical splits,
+# byte-identical tile IDs, and (modulo GPU nondeterminism) a
+# fine-tuned checkpoint whose sha256 is recorded in
+# runs/vegas_prepare/train/training_manifest.json.
+
+aoi:
+  name: AOI_2_Vegas
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+  chip_ids_source: runs/vegas_prepare/chip_selection.json
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  # Larger sample than Phase 2's 150 so block-splitting yields enough
+  # training tiles per AOI. Still seeded; still deterministic.
+  n_tiles: 400
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+# Phase 1 geographic block split (see docs/phase1-decisions.md).
+split:
+  block_size_m: 1000.0
+  ratios: [0.70, 0.15, 0.15]
+  seed: 20260911
+
+train:
+  source_weight: weights/neat-fullxview-epoch75.pth
+  output_dir: runs/vegas_prepare/train
+  batch_size: 4
+  epochs: 30
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  amp: true
+  patience: 5
+  num_workers: 2
+  seed: 20260911
+  # Per-AOI run: pooled fields intentionally empty.
+  pooled_aois: []
+  pooled_aois_work_dirs: []
+
+abd:
+  config: external/abd/input/config.toml
+  # For eval, point at the fine-tuned checkpoint produced by
+  # `bfbench train configs/spacenet_vegas_phase1.yaml`:
+  checkpoint: runs/vegas_prepare/train/best.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/vegas_prepare
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

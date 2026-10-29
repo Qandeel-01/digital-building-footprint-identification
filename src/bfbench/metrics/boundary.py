@@ -39,10 +39,7 @@ def _densify_polygon(geom: BaseGeometry, step_m: float) -> np.ndarray:
     """
     if geom is None or geom.is_empty:
         return np.empty((0, 2), dtype=float)
-    if geom.geom_type == "MultiPolygon":
-        pieces = list(geom.geoms)
-    else:
-        pieces = [geom]
+    pieces = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
     out: list[np.ndarray] = []
     for poly in pieces:
         rings = [poly.exterior]

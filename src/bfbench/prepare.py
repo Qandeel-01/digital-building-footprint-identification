@@ -28,12 +28,15 @@ import mercantile
 import yaml
 
 from bfbench.data import (
+    BlockSplitConfig,
     DedupRule,
     SpaceNetAOI,
     SpaceNetFetcher,
+    blocks_to_geodataframe,
     build_vrt,
     merge_reference,
     sample_tiles,
+    split_tiles,
     summarize_aoi,
     tile_is_fully_covered,
 )
@@ -70,6 +73,12 @@ class PrepareConfig:
     seed: int
     min_valid_fraction: float
 
+    # Phase 1: optional block-based geographic split. If `split_section`
+    # is None the behaviour of prepare is unchanged from Phase 2/3.
+    split_block_size_m: float | None
+    split_ratios: tuple[float, float, float] | None
+    split_seed: int | None
+
     work_dir: Path
 
 
@@ -81,6 +90,14 @@ def _load(path: Path) -> PrepareConfig:
     ref = y["reference"]["dedup"]
     smp = y["sampling"]
     run = y["run"]
+    split_block = y.get("split", {}) or {}
+    split_block_size_m = split_block.get("block_size_m")
+    split_ratios_raw = split_block.get("ratios")
+    split_ratios = (
+        tuple(float(r) for r in split_ratios_raw)  # type: ignore[arg-type]
+        if split_ratios_raw is not None else None
+    )
+    split_seed = split_block.get("seed")
     return PrepareConfig(
         aoi_name=aoi["name"],
         aoi_id=int(aoi["aoi_id"]),
@@ -102,6 +119,10 @@ def _load(path: Path) -> PrepareConfig:
         n_tiles=int(smp["n_tiles"]),
         seed=int(smp["seed"]),
         min_valid_fraction=float(smp["min_valid_fraction"]),
+        split_block_size_m=(float(split_block_size_m)
+                            if split_block_size_m is not None else None),
+        split_ratios=split_ratios,  # type: ignore[arg-type]
+        split_seed=(int(split_seed) if split_seed is not None else None),
         work_dir=Path(run["work_dir"]),
     )
 
@@ -260,6 +281,59 @@ def _manifest(cfg: PrepareConfig, cfg_path: Path, bucket_uri: str) -> None:
     )
 
 
+def _geo_split(cfg: PrepareConfig, sampled_path: Path) -> Path | None:
+    """Phase 1: emit train / val / test tile IDs by geographic block.
+
+    No-op if the config has no `split:` section. Writes
+    `block_split.json` with per-split tile IDs + assignment hash + the
+    full block GeoJSON next to it.
+    """
+    if (cfg.split_block_size_m is None
+            or cfg.split_ratios is None
+            or cfg.split_seed is None):
+        _LOG.info("no split section in config; skipping block split")
+        return None
+
+    out = cfg.work_dir / "block_split.json"
+    if out.exists():
+        _LOG.info("block_split cache hit: %s", out)
+        return out
+
+    payload = json.loads(sampled_path.read_text(encoding="utf-8"))
+    tiles = [mercantile.Tile(x, y, z) for z, x, y in payload["tiles"]]
+    bs_cfg = BlockSplitConfig(
+        block_size_m=cfg.split_block_size_m,
+        ratios=cfg.split_ratios,  # type: ignore[arg-type]
+        seed=cfg.split_seed,
+        equal_area_epsg=cfg.equal_area_epsg,
+    )
+    res = split_tiles(tiles, bs_cfg)
+    out.write_text(
+        json.dumps({
+            "aoi": cfg.aoi_name,
+            "block_size_m": cfg.split_block_size_m,
+            "ratios": list(cfg.split_ratios),
+            "seed": cfg.split_seed,
+            "equal_area_epsg": cfg.equal_area_epsg,
+            "assignment_hash": res.assignment_hash,
+            "n_train": len(res.train),
+            "n_val":   len(res.val),
+            "n_test":  len(res.test),
+            "train": [[t.z, t.x, t.y] for t in res.train],
+            "val":   [[t.z, t.x, t.y] for t in res.val],
+            "test":  [[t.z, t.x, t.y] for t in res.test],
+        }, indent=2),
+        encoding="utf-8",
+    )
+    # Blocks GeoJSON for visualisation; small, written once.
+    blocks_gdf = blocks_to_geodataframe(res.blocks, cfg.equal_area_epsg)
+    blocks_gdf.to_file(cfg.work_dir / "block_split.geojson", driver="GeoJSON")
+    _LOG.info("block split: train=%d val=%d test=%d hash=%s",
+              len(res.train), len(res.val), len(res.test),
+              res.assignment_hash[:12])
+    return out
+
+
 def prepare(cfg_path: Path) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -273,5 +347,6 @@ def prepare(cfg_path: Path) -> None:
     ref = _reference(cfg, geos)
     sampled = _sample(cfg, vrt)
     summary = _summary(cfg, sampled, ref)
+    _geo_split(cfg, sampled)
     _manifest(cfg, cfg_path, bucket_uri)
     _LOG.info("done. summary at %s", summary)

@@ -34,6 +34,7 @@ if os.name == "nt":
     os.environ.setdefault("PROJ_LIB", str(_prefix / "Library" / "share" / "proj"))
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402

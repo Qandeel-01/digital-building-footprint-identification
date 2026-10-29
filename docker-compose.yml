@@ -1,0 +1,35 @@
+# One-AOI smoke stack. Runs `bfbench prepare` + `run-prepared` + `eval` on
+# configs/spacenet_vegas_smoke.yaml (10 chips, Vegas). Requires a GPU and a
+# fetched checkpoint under weights/ on the host; see docs/phase0-decisions.md.
+#
+# Usage:
+#     docker compose run --rm bfbench-smoke
+#
+# This is a developer convenience target. CI builds the image but does NOT
+# run this stack (no GPU, no committed checkpoint).
+
+services:
+  bfbench-smoke:
+    image: bfbench:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["bash", "scripts/docker_smoke.sh"]
+    working_dir: /workspace
+    environment:
+      # Rasterio needs these pointed at the conda env's data dirs; the base
+      # image already sets PATH to pick those up but we assert the dirs here
+      # for clarity in `docker compose config`.
+      BFBENCH_SMOKE_CONFIG: configs/spacenet_vegas_smoke.yaml
+    volumes:
+      # Bind mounts so artifacts persist on the host and the fetched
+      # checkpoint is reused across runs.
+      - ./weights:/workspace/weights
+      - ./runs:/workspace/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]

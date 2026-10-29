@@ -232,10 +232,7 @@ def _density_and_area_columns(tile_poly_ea, ref_gdf_ea: gpd.GeoDataFrame,
     # Reference polygons whose centroid is inside the tile:
     inside_mask = ref_centroids_ea.within(tile_poly_ea)
     inside = ref_gdf_ea[inside_mask]
-    if len(inside) > 0:
-        med_area = float(inside.geometry.area.median())
-    else:
-        med_area = float("nan")
+    med_area = float(inside.geometry.area.median()) if len(inside) > 0 else float("nan")
 
     out = {"median_ref_area_m2": med_area}
     tc = tile_poly_ea.centroid

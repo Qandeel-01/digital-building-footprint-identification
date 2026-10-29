@@ -21,12 +21,24 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `.gitignore`                                   | Weights, data, output, secrets.                                                              |
 | `.env.example`                                 | Placeholder for optional env overrides. No secrets committed.                                |
 | `.github/workflows/ci.yml`                     | ruff + pytest on push. CPU-only.                                                             |
+| `.github/workflows/docker-build.yml`           | Build the Phase 0 reproducibility image on push/PR (buildx + gha cache). No GPU, no run.    |
+| `Dockerfile`                                   | Phase 0 reproducibility image: cuda12.8-runtime base + miniforge + env.yml + patched abd.    |
+| `.dockerignore`                                | Keep build context small; preserve `external/abd/.git` for the patch applier.                |
+| `docker-compose.yml`                           | `bfbench-smoke` service: one-AOI prepare->run-prepared->eval on `spacenet_vegas_smoke.yaml`. |
+| `Makefile`                                     | Thin wrappers: `docker-build`, `docker-smoke`, `patches`, `smoke`, `lint`, `test`.          |
 | `configs/spacenet_vegas_sample.yaml`           | One-AOI pipeline config.                                                                     |
 | `configs/spacenet_vegas.yaml`                  | Full-AOI benchmark config (Phase 2, Vegas).                                                  |
 | `configs/spacenet_paris.yaml`                  | Full-AOI benchmark config (Phase 2, Paris).                                                  |
 | `configs/spacenet_shanghai.yaml`               | Full-AOI benchmark config (Phase 2, Shanghai).                                               |
 | `configs/spacenet_khartoum.yaml`               | Full-AOI benchmark config (Phase 2, Khartoum).                                               |
+| `configs/spacenet_vegas_phase1.yaml`           | Phase 1 config (Vegas): adds `split:` + `train:` sections.                                   |
+| `configs/spacenet_paris_phase1.yaml`           | Phase 1 config (Paris).                                                                      |
+| `configs/spacenet_shanghai_phase1.yaml`        | Phase 1 config (Shanghai).                                                                   |
+| `configs/spacenet_khartoum_phase1.yaml`        | Phase 1 config (Khartoum).                                                                   |
+| `configs/spacenet_pooled_phase1.yaml`          | Phase 1 pooled config: concatenates all four AOIs' train/val blocks.                         |
 | `docs/environment-notes.md`                    | Every deviation from upstream requirements.txt, patch rationale, Windows NCCL note.          |
+| `docs/phase0-decisions.md`                     | Base-image choice, env.yml reuse, patch-applier placement, CI build-only rationale.          |
+| `docs/phase1-decisions.md`                     | Block-split rationale, fine-tuning hyperparams, bootstrap CI protocol, GPU runbook.          |
 | `docs/adapter-decisions.md`                    | Rationale for GSD resampling + tile size + border handling. Phase 3 GSD sweep replaces Phase 2. |
 | `docs/metric-decisions.md`                     | Phase 3 spec calls (asymmetry, centre-only, raster pixel_iou, required window_m, ...).          |
 | `docs/reproduce.md`                            | From-clean-clone runbook.                                                                    |
@@ -42,17 +54,27 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `src/bfbench/data/mosaic.py`                   | Per-AOI GDAL VRT + `tile_is_fully_covered` (Task 1b).                                        |
 | `src/bfbench/data/reference.py`                | Chip-geojson merge + dedup on seams (Task 1c).                                               |
 | `src/bfbench/data/sampling.py`                 | Deterministic seeded tile sampling (Task 1d).                                                |
+| `src/bfbench/data/block_split.py`              | Phase 1: geographic 1 km block train/val/test splitter in EPSG:6933.                        |
 | `src/bfbench/data/summary.py`                  | Per-AOI descriptive stats (Task 1e).                                                         |
 | `src/bfbench/prepare.py`                       | `bfbench prepare`: fetch -> mosaic -> merge references -> sample tiles -> summarise.          |
 | `src/bfbench/metrics/pixel.py`                 | `pixel_iou` (raster interface, centre-only default; Phase 3 implemented).                     |
 | `src/bfbench/metrics/count.py`                 | `count_error` per-tile + `count_error_aoi` aggregate (Phase 3 implemented).                   |
 | `src/bfbench/metrics/stratify.py`              | `stratify_by_area` / `stratify_by_density` (Phase 3 implemented, bootstrap CI).               |
+| `src/bfbench/metrics/bootstrap.py`             | Phase 1: top-line percentile bootstrap (mean + ratio-of-sums) with deterministic seed.       |
 | `src/bfbench/metrics/instance.py`              | `match_instances` / `instance_prf` / `merge_rate` / `split_rate` -- RESERVED stubs.           |
 | `src/bfbench/metrics/boundary.py`              | `boundary_distance` -- RESERVED stub (depends on MatchResult).                                |
 | `src/bfbench/eval.py`                          | `bfbench eval`: per-tile metric harness writing tidy Parquet.                                 |
 | `src/bfbench/run_prepared.py`                  | `bfbench run-prepared`: adapt+predict+vectorize+filter on the mosaic + sampled tiles.         |
-| `src/bfbench/cli.py`                           | `bfbench run` / `run-prepared` / `verify` / `prepare` / `eval`.                               |
+| `src/bfbench/cli.py`                           | `bfbench run` / `run-prepared` / `verify` / `prepare` / `eval` / `train`.                     |
+| `src/bfbench/train_cli.py`                     | Phase 1: YAML -> dataset + model + training-run plumbing invoked by `bfbench train`.          |
+| `src/bfbench/train/__init__.py`                | Phase 1 training package re-exports.                                                          |
+| `src/bfbench/train/dataset.py`                 | Phase 1: `BuildingTileDataset` (reads ABD tile tree + rasterises reference on the fly).       |
+| `src/bfbench/train/loop.py`                    | Phase 1: AMP training loop + Albunet loader + BCE+Dice loss (upstream model unchanged).      |
+| `src/bfbench/train/manifest.py`                | Phase 1: training manifest schema + sha256 helpers; writer refuses stale manifests.           |
 | `scripts/fetch_weights.py`                     | Google Drive download of `neat-fullxview-epoch75` with SHA-256 pinning.                      |
+| `scripts/docker_smoke.sh`                      | Phase 0 one-AOI entrypoint: asserts checkpoint, runs prepare->run-prepared->eval.             |
+| `scripts/compare_baseline_vs_finetuned.py`     | Phase 1: reads two eval parquets + emits markdown + JSON with 95% bootstrap CIs.             |
+| `scripts/kaggle_phase1.py`                     | Phase 1: GPU runbook orchestrator (prepare -> adapt -> train -> eval -> baseline rescore).   |
 | `scripts/apply_upstream_patches.py`            | Idempotent applier for `patches/abd/*.patch` on top of the submodule SHA.                    |
 | `scripts/predict_local.py`                     | Single-GPU predict shim (uses upstream Albunet/SemSeg unchanged; skips DDP/NCCL).            |
 | `scripts/qa_figure.py`                         | 3-panel matplotlib sanity figure.                                                            |
@@ -78,6 +100,14 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `tests/test_metrics.py`                        | Failing-on-clean-checkout metric tests with hand-computed expected values (Task 2).           |
 | `tests/test_eval.py`                           | End-to-end eval harness tests: stub-mode Parquet, resumability, seed/hash manifest.           |
 | `tests/test_figures.py`                        | Smoke tests for the synthetic-placeholder path of `scripts/figures.py`.                       |
+| `tests/test_dockerfile.py`                     | Phase 0 static checks on Dockerfile + .dockerignore (base image, patch order, non-root).      |
+| `tests/test_phase0_smoke_assets.py`            | Phase 0 static checks on docker-compose + Makefile + docker_smoke.sh.                         |
+| `tests/test_block_split.py`                    | Phase 1: zero spatial overlap + determinism + ratio + CRS tests for `block_split`.           |
+| `tests/test_bootstrap.py`                      | Phase 1: hand-computed bootstrap CI math + micro-PRF ratio-of-sums.                           |
+| `tests/test_train_smoke.py`                    | Phase 1: CPU smoke training (loss drops, checkpoint + sha + manifest written).               |
+| `tests/test_train_manifest.py`                 | Phase 1: training manifest schema + sha256 pinning tests.                                    |
+| `tests/test_prepare_split_integration.py`      | Phase 1: `_geo_split` emits disjoint tile sets; train_cli rejects configs without split/train.|
+| `tests/test_compare_baseline_vs_finetuned.py`  | Phase 1: toy-parquet comparison test (shared-tile intersection + point estimates + schema).  |
 
 Everything under `runs/`, `weights/`, `data/`, `output/` is gitignored
 and produced by running the pipeline; it is not committed.

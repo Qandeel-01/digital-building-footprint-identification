@@ -36,5 +36,9 @@ env/
 .vscode/*
 !.vscode/launch.json
 !.vscode/extensions.json
+*.code-workspace
 .DS_Store
 Thumbs.db
+
+# Claude Code local cache
+.claude/

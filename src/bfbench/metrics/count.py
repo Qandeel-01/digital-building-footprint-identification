@@ -58,10 +58,7 @@ def count_error_aoi(rows: pd.DataFrame) -> dict[str, float]:
     n_ref  = int(rows["n_ref"].sum())
     abs_e  = float((rows["n_pred"] - rows["n_ref"]).abs().sum())
     signed = float(n_pred - n_ref)
-    if n_ref == 0:
-        rel = math.nan
-    else:
-        rel = signed / n_ref
+    rel = math.nan if n_ref == 0 else signed / n_ref
     return {
         "abs_error":      abs_e,
         "signed_error":   signed,

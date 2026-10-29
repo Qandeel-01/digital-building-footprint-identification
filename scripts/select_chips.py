@@ -24,7 +24,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -117,10 +116,8 @@ def main(argv: list[str] | None = None) -> None:
     errors: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {ex.submit(_probe_one, k, s): k for k, s in keys}
-        done = 0
-        for fut in as_completed(futs):
+        for done, fut in enumerate(as_completed(futs), start=1):
             cid, entry, err = fut.result()
-            done += 1
             if entry is not None:
                 probed[cid] = entry
             else:

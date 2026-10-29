@@ -239,10 +239,10 @@ def _panel_figure(z17_tiles: list[mercantile.Tile],
                              constrained_layout=True)
     median_tile = z17_tiles[median_idx]
     b = mercantile.bounds(median_tile)
-    xlim = (b.west, b.east); ylim = (b.south, b.north)
+    xlim = (b.west, b.east)
+    ylim = (b.south, b.north)
     ref_in_view = ref_gdf_wgs.cx[b.west:b.east, b.south:b.north]
     for row, z in enumerate((16, 17, 18)):
-        r = results_per_zoom[z]
         tiles_root = out_root / f"z{z}" / "tiles" / "images"
         # Imagery panel: read the median z=17 tile's neighbourhood at
         # this zoom. Simpler: just pick the tile at zoom z whose
@@ -257,7 +257,8 @@ def _panel_figure(z17_tiles: list[mercantile.Tile],
             tb = mercantile.bounds(tile_z)
             ax.imshow(img, extent=(tb.west, tb.east, tb.south, tb.north),
                       origin="upper")
-        ax.set_xlim(xlim); ax.set_ylim(ylim)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
         # Predictions
         pred_path = out_root / f"z{z}" / "predicted.geojson"
         pgdf = (gpd.read_file(pred_path).to_crs("EPSG:4326")
@@ -270,7 +271,8 @@ def _panel_figure(z17_tiles: list[mercantile.Tile],
                       origin="upper", alpha=0.5)
         pgdf.plot(ax=ax, facecolor=(1, 0.08, 0.58, 0.4),
                   edgecolor="deeppink", linewidth=1.0)
-        ax.set_xlim(xlim); ax.set_ylim(ylim)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
         # Reference (same in all rows; drawn per zoom's imagery)
         ax = axes[row, 2]
         ax.set_title(f"z={z}  reference ({len(ref_in_view)} polys in view)")
@@ -279,9 +281,11 @@ def _panel_figure(z17_tiles: list[mercantile.Tile],
                       origin="upper", alpha=0.5)
         ref_in_view.plot(ax=ax, facecolor=(0, 1, 1, 0.35),
                          edgecolor="cyan", linewidth=1.0)
-        ax.set_xlim(xlim); ax.set_ylim(ylim)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
         for ax in axes[row]:
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
     fig.suptitle(f"GSD sweep -- median tile z=17 ({median_tile.x}, {median_tile.y})",
                  y=1.01)
     out = out_root / "gsd_sweep_panel.png"
@@ -317,10 +321,12 @@ def main(argv: list[str] | None = None) -> None:
     for t in tiles_z17:
         p16 = mercantile.parent(t)
         if (p16.z, p16.x, p16.y) not in seen16:
-            tiles_z16.append(p16); seen16.add((p16.z, p16.x, p16.y))
+            tiles_z16.append(p16)
+            seen16.add((p16.z, p16.x, p16.y))
         for c in mercantile.children(t):
             if (c.z, c.x, c.y) not in seen18:
-                tiles_z18.append(c); seen18.add((c.z, c.x, c.y))
+                tiles_z18.append(c)
+                seen18.add((c.z, c.x, c.y))
     _LOG.info("z=16 parents=%d, z=18 children=%d", len(tiles_z16), len(tiles_z18))
 
     zoom_tiles = {16: tiles_z16, 17: tiles_z17, 18: tiles_z18}

@@ -103,9 +103,20 @@ setup time; each has been re-verified in isolation (see
 
 ## Repro from a clean clone
 
-Detailed reproduction steps live in
-[`docs/reproduce.md`](docs/reproduce.md). Short version, on Windows
-with miniconda3 and an NVIDIA GPU:
+Two supported paths:
+
+- **Docker (Linux + NVIDIA GPU, one-AOI smoke):** `make docker-build`
+  then `make docker-smoke`. The compose stack mounts `weights/` and
+  `runs/`, requires a fetched checkpoint and a GPU, and runs
+  `bfbench prepare` → `run-prepared` → `eval` on
+  `configs/spacenet_vegas_smoke.yaml`. Rationale, base-image choice
+  and limitations are documented in
+  [`docs/phase0-decisions.md`](docs/phase0-decisions.md).
+- **Host (Windows + miniconda3 + NVIDIA GPU, full pipeline):** steps
+  below; detailed walk-through in
+  [`docs/reproduce.md`](docs/reproduce.md).
+
+Short host-side version:
 
 ```powershell
 git clone --recurse-submodules `
@@ -136,6 +147,19 @@ and the same code works):
 ```powershell
 pytest tests/test_real_figures_integration.py tests/test_qualitative_panels_all_aois.py
 ```
+
+## Phase 1 — domain-adaptation fine-tuning
+
+Phase 1 fine-tunes the baseline AlbuNet on SpaceNet 2 training blocks
+per AOI (and one pooled model), evaluated on held-out geographic
+blocks (1 km × 1 km, 70/15/15, deterministic). The split, hyper-
+parameters, and bootstrap CI protocol are documented in
+[`docs/phase1-decisions.md`](docs/phase1-decisions.md). The GPU
+runbook — intended for Kaggle or Colab — is in
+[`scripts/kaggle_phase1.py`](scripts/kaggle_phase1.py). Numbers land
+in `runs/<aoi>_prepare/eval/comparison_<AOI>.json` and are rendered
+into [`docs/results.md`](docs/results.md); nothing is typed in by
+hand.
 
 ## Design decisions
 

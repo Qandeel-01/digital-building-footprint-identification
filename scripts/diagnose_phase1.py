@@ -29,10 +29,8 @@ import numpy as np
 import rasterio
 import torch
 from abd_model.core import load_config, make_palette
-from abd_model.loaders.semseg import SemSeg
 from abd_model.nn.albunet import Albunet
 from abd_model.tiles import tile_label_to_file, tiles_from_csv
-from PIL import Image
 from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
@@ -79,10 +77,7 @@ def _sigmoid_probs(model, device, tile_tiff: Path) -> np.ndarray:
 
 def _hist_stats(probs: np.ndarray, mask_valid: np.ndarray | None) -> dict:
     """probs: (C,H,W) or (H,W). Use class-1 (Building) if C=2. Restrict to valid mask."""
-    if probs.ndim == 3:
-        p = probs[1]
-    else:
-        p = probs
+    p = probs[1] if probs.ndim == 3 else probs
     if mask_valid is not None:
         p = p[mask_valid]
     if p.size == 0:
@@ -123,7 +118,8 @@ def _plot_prob_map(probs: np.ndarray, out: Path, label: str) -> None:
     fig, ax = plt.subplots(figsize=(6, 6), constrained_layout=True)
     im = ax.imshow(p, vmin=0, vmax=1, cmap="magma")
     ax.set_title(f"raw sigmoid p(Building)\n{label}")
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     fig.colorbar(im, ax=ax, fraction=0.046)
     fig.savefig(out, dpi=140)
     plt.close(fig)
@@ -224,7 +220,7 @@ def main() -> int:
         shutil.rmtree(zerofilled_root)
     n_pos_zero = _threshold_and_vectorize(probs[1], tile, zerofilled_root, palette, transparency)
 
-    print(f"\npositive-pixel counts after thresholding:")
+    print("\npositive-pixel counts after thresholding:")
     print(f"  nodata zero-filled (Phase 1 behaviour): {n_pos_zero}")
     print(f"  nodata masked at output:                 {n_pos_masked}")
 

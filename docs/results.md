@@ -1,3 +1,41 @@
+# Benchmark results
+
+## Phase 1 — fine-tuned vs. baseline (held-out block test tiles)
+
+Table below is populated by `scripts/compare_baseline_vs_finetuned.py`
+after a GPU run on Kaggle / Colab. See `docs/phase1-decisions.md` and
+`scripts/kaggle_phase1.py`. Every cell is a bootstrap over per-tile
+values from the eval parquet; the brief forbids typed-in numbers, so
+cells are left as `pending` until the parquets exist on disk.
+
+| AOI | n_test_tiles | metric | baseline [CI] | fine-tuned (per-AOI) [CI] | fine-tuned (pooled) [CI] |
+|---|---|---|---|---|---|
+| AOI_2_Vegas    | pending | F1 | pending | pending | pending |
+| AOI_2_Vegas    | pending | precision | pending | pending | pending |
+| AOI_2_Vegas    | pending | recall | pending | pending | pending |
+| AOI_2_Vegas    | pending | merge_rate | pending | pending | pending |
+| AOI_2_Vegas    | pending | split_rate | pending | pending | pending |
+| AOI_2_Vegas    | pending | pixel_IoU | pending | pending | pending |
+| AOI_2_Vegas    | pending | Chamfer_m | pending | pending | pending |
+| AOI_3_Paris    | pending | F1 | pending | pending | pending |
+| AOI_4_Shanghai | pending | F1 | pending | pending | pending |
+| AOI_5_Khartoum | pending | F1 | pending | pending | pending |
+
+Fill procedure (run on the GPU host, after
+`bfbench eval configs/spacenet_<aoi>_phase1.yaml`):
+
+```
+python scripts/kaggle_phase1.py evaluate-baseline-on-phase1-tiles \
+    configs/spacenet_<aoi>_phase1.yaml
+python scripts/kaggle_phase1.py build-comparison \
+    configs/spacenet_<aoi>_phase1.yaml
+```
+
+Those two commands write `runs/<aoi>_prepare/eval/comparison_<AOI>.json`
+and `.md` with every number used in this table.
+
+---
+
 # Phase 4 results
 
 Every number below is traceable to a row in a per-AOI Parquet under

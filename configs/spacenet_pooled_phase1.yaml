@@ -1,0 +1,83 @@
+# Phase 1 pooled fine-tuning: concatenate the train/val tiles from all
+# four AOIs. The "parent" AOI is Vegas (just a convention; its
+# work_dir hosts the output + manifest). The other three are listed
+# under train.pooled_aois_work_dirs.
+#
+# Each of runs/{vegas,paris,shanghai,khartoum}_prepare must already
+# have `block_split.json` on disk (i.e. you ran
+# `bfbench prepare configs/spacenet_<aoi>_phase1.yaml` for each one
+# first).
+#
+# The pooled run is evaluated per-AOI by pointing each per-AOI config
+# at the pooled checkpoint path and re-running `bfbench run-prepared`
+# + `bfbench eval`.
+
+aoi:
+  name: AOI_pooled
+  provider: spacenet2
+  # Parent AOI: Vegas (for the per-AOI reference / tile tree used for
+  # the pooled run's val set and output directory).
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+  chip_ids_source: runs/vegas_prepare/chip_selection.json
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  # The parent config's sampling only applies to Vegas; the other three
+  # AOIs are included via their own prepare runs.
+  n_tiles: 400
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+split:
+  block_size_m: 1000.0
+  ratios: [0.70, 0.15, 0.15]
+  seed: 20260911
+
+train:
+  source_weight: weights/neat-fullxview-epoch75.pth
+  output_dir: runs/pooled_prepare/train
+  batch_size: 4
+  epochs: 30
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  amp: true
+  patience: 5
+  num_workers: 2
+  seed: 20260911
+  pooled_aois:
+    - AOI_3_Paris
+    - AOI_4_Shanghai
+    - AOI_5_Khartoum
+  pooled_aois_work_dirs:
+    - runs/paris_prepare
+    - runs/shanghai_prepare
+    - runs/khartoum_prepare
+
+abd:
+  config: external/abd/input/config.toml
+  checkpoint: runs/pooled_prepare/train/best.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/vegas_prepare   # parent AOI's work_dir -- Vegas
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

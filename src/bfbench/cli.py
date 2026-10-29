@@ -412,6 +412,23 @@ def eval(  # noqa: A001 -- shadows builtin, but that's the subcommand name
     typer.echo(f"eval parquet: {out}")
 
 
+_TRAIN_CONFIG_ARG = typer.Argument(..., exists=False, help="YAML training config.")
+
+
+@app.command()
+def train(config_path: Path = _TRAIN_CONFIG_ARG) -> None:
+    """Fine-tune the AlbuNet baseline on one AOI (or pooled across AOIs).
+
+    Phase 1 entry point. Requires a config with `train:` and `split:`
+    sections, and that `bfbench prepare` has run for each AOI
+    referenced. See docs/phase1-decisions.md and
+    configs/spacenet_*_phase1.yaml.
+    """
+    from bfbench.train_cli import train as _train  # noqa: PLC0415
+    out = _train(config_path)
+    typer.echo(f"training manifest: {out}")
+
+
 @app.command()
 def verify() -> None:
     """Verify that the upstream `abd` CLI and CUDA are reachable from this env."""

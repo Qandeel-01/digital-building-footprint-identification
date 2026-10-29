@@ -25,6 +25,7 @@ if os.name == "nt":
 
 import geopandas as gpd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import mercantile  # noqa: E402
@@ -55,7 +56,8 @@ def _plot_tile(ax, imagery: np.ndarray | None,
         gdf_wgs.plot(ax=ax, facecolor=poly_fill, edgecolor=poly_edge, linewidth=1.2)
     ax.set_xlim(b.west, b.east)
     ax.set_ylim(b.south, b.north)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     ax.set_title(title, fontsize=10)
 
 

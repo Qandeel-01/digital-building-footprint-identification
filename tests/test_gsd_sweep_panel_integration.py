@@ -7,8 +7,6 @@ Skipped when the sweep results directory is absent.
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,23 +23,19 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_generate_gsd_sweep_panel_png():
-    import json
 
     import geopandas as gpd
+    import matplotlib
     import mercantile
     import numpy as np
     import pandas as pd
     import yaml
     from PIL import Image
-
-    import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     cfg = yaml.safe_load(CFG.read_text(encoding="utf-8"))
     work_dir = Path(cfg["run"]["work_dir"])
-    payload = json.loads((work_dir / "sampled_tiles.json").read_text(encoding="utf-8"))
-    tiles_z17 = [mercantile.Tile(x, y, z) for z, x, y in payload["tiles"][:20]]
 
     per_tile = pd.read_csv(SWEEP / "per_tile.csv")
     per_tile["count_ratio"] = per_tile["n_pred"] / per_tile["n_ref"].replace(0, np.nan)
@@ -54,10 +48,7 @@ def test_generate_gsd_sweep_panel_png():
     b = mercantile.bounds(median_tile)
 
     ref = gpd.read_file(work_dir / "reference.geojson")
-    if ref.crs is None:
-        ref = ref.set_crs("EPSG:4326")
-    else:
-        ref = ref.to_crs("EPSG:4326")
+    ref = ref.set_crs("EPSG:4326") if ref.crs is None else ref.to_crs("EPSG:4326")
     ref_in_view = ref.cx[b.west:b.east, b.south:b.north]
 
     fig, axes = plt.subplots(3, 3, figsize=(12, 12), constrained_layout=True)
@@ -99,8 +90,10 @@ def test_generate_gsd_sweep_panel_png():
                         ax.fill(xs, ys, facecolor="cyan", alpha=0.35,
                                 edgecolor="cyan", linewidth=1.0)
                 ax.set_title(f"z={z}  ref   n={len(ref_in_view)}")
-            ax.set_xlim(b.west, b.east); ax.set_ylim(b.south, b.north)
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xlim(b.west, b.east)
+            ax.set_ylim(b.south, b.north)
+            ax.set_xticks([])
+            ax.set_yticks([])
 
     fig.suptitle(f"GSD sweep -- median z=17 tile ({median_tile.x}, {median_tile.y})",
                  fontsize=12)

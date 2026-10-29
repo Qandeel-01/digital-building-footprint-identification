@@ -81,6 +81,30 @@ in this project's tree.
 The rest of the pipeline (`abd vectorize`, `filter-buildings`) still
 runs through the upstream CLIs via subprocess as originally designed.
 
+## Windows-specific test-runtime constraint (Phase 1 only)
+
+On native Windows, running the Phase 1 pytest suite (`tests/test_train_smoke.py`)
+in the same pytest process as the rasterio-heavy adapter / mosaic tests triggers
+a native `Fatal Python error: Aborted` inside rasterio once torch has been
+imported. Both torch (via MKL) and GDAL/rasterio ship their own OpenMP runtime
+on Windows; the two libomp copies collide at process shutdown. Linux wheels
+share one runtime, so CI does not hit this.
+
+Handled automatically by `tests/conftest.py`, which sets
+`KMP_DUPLICATE_LIB_OK=TRUE` on `sys.platform == "win32"` before any test
+module is imported. The flag tells Intel OpenMP to tolerate a second libomp
+in the same process; it is scoped to the test harness only (never applied in
+production code) and is a no-op on Linux, where both wheels share one
+OpenMP runtime. The CI job (`.github/workflows/ci.yml`) runs on
+`ubuntu-latest` and is unaffected.
+
+Running `pytest -m "not gpu and not network"` on native Windows therefore
+Just Works -- no manual env-var dance.
+
+If this ever surfaces during production use, prefer migrating the training
+step to a Linux container (the Phase 0 Dockerfile already works) rather than
+shipping `KMP_DUPLICATE_LIB_OK=TRUE` as a default outside the test harness.
+
 ## Windows-specific runtime constraint (predict step)
 
 `abd_model.tools.predict.main` does:

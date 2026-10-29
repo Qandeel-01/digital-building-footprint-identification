@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import geopandas as gpd
-import pytest
 from shapely.geometry import Polygon
 
 from bfbench.data.reference import DedupRule, merge_reference

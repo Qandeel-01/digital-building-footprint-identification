@@ -45,16 +45,12 @@ import numpy as np
 import rasterio
 import yaml
 from PIL import Image
-from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.warp import reproject as _rio_reproject
-from rasterio.warp import transform_bounds
 
 from bfbench.data.adapter import (
     WEBMERCATOR_EPSG,
-    pick_zoom_for_gsd,
     tile_bounds_webmercator,
-    webmercator_gsd_at,
 )
 
 _LOG = logging.getLogger("bfbench.run_prepared")
@@ -77,7 +73,9 @@ class PreparedRunConfig:
 
 def _load(cfg_path: Path) -> PreparedRunConfig:
     y = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    ad = y["adapter"]; abd = y["abd"]; run = y["run"]
+    ad = y["adapter"]
+    abd = y["abd"]
+    run = y["run"]
     return PreparedRunConfig(
         aoi_name=y["aoi"]["name"],
         work_dir=Path(run["work_dir"]),

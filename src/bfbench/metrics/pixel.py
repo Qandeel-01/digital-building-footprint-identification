@@ -105,10 +105,7 @@ def pixel_iou(pred_prob: np.ndarray | Path,
     expected_shape = (height, width) if isinstance(pred_prob, np.ndarray) else None
     arr = _load_pred_mask(pred_prob, expected_shape)
 
-    if arr.dtype.kind == "f":
-        pred_bin = arr >= threshold
-    else:
-        pred_bin = arr.astype(bool)
+    pred_bin = arr >= threshold if arr.dtype.kind == "f" else arr.astype(bool)
 
     # Handle grid-shape mismatch when a Path was given by resampling on
     # read is out of scope; we assert instead so any caller mismatch

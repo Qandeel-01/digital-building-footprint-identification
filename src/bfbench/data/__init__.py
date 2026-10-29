@@ -1,3 +1,10 @@
+from bfbench.data.block_split import (
+    BlockAssignment,
+    BlockSplitConfig,
+    SplitResult,
+    blocks_to_geodataframe,
+    split_tiles,
+)
 from bfbench.data.equal_area import (
     DEFAULT_EQUAL_AREA_EPSG,
     NonEqualAreaCRSError,
@@ -12,6 +19,8 @@ from bfbench.data.summary import AOISummary, summaries_to_dataframe, summarize_a
 
 __all__ = [
     "AOISummary",
+    "BlockAssignment",
+    "BlockSplitConfig",
     "DEFAULT_EQUAL_AREA_EPSG",
     "DedupResult",
     "DedupRule",
@@ -20,11 +29,14 @@ __all__ = [
     "SamplingResult",
     "SpaceNetAOI",
     "SpaceNetFetcher",
+    "SplitResult",
     "assert_equal_area_crs",
+    "blocks_to_geodataframe",
     "build_vrt",
     "is_equal_area",
     "merge_reference",
     "sample_tiles",
+    "split_tiles",
     "summaries_to_dataframe",
     "summarize_aoi",
     "tile_is_fully_covered",

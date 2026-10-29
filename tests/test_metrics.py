@@ -129,7 +129,8 @@ def test_pixel_iou_all_touched_inflates_area_size_dependently():
     for side in (5.0, 9.0, 15.0, 32.0):
         w = side + 4.0  # a little margin so the pred grid is bigger than ref
         h = side + 4.0
-        n_x = int(w / p); n_y = int(h / p)
+        n_x = int(w / p)
+        n_y = int(h / p)
         pred_full = np.ones((n_y, n_x), dtype=np.uint8)
         # Half-pixel offset -> edges fall BETWEEN pixel centres
         ref  = _gdf([_square(2.25, 2.25, side)])
