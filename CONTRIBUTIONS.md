@@ -74,6 +74,7 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `scripts/fetch_weights.py`                     | Google Drive download of `neat-fullxview-epoch75` with SHA-256 pinning.                      |
 | `scripts/docker_smoke.sh`                      | Phase 0 one-AOI entrypoint: asserts checkpoint, runs prepare->run-prepared->eval.             |
 | `scripts/compare_baseline_vs_finetuned.py`     | Phase 1: reads two eval parquets + emits markdown + JSON with 95% bootstrap CIs.             |
+| `scripts/baseline_ci_table.py`                 | Produce the README baseline table with 95% bootstrap CIs (P/R/F1 + merge + pixel_IoU + Chamfer). |
 | `scripts/kaggle_phase1.py`                     | Phase 1: GPU runbook orchestrator (prepare -> adapt -> train -> eval -> baseline rescore).   |
 | `scripts/apply_upstream_patches.py`            | Idempotent applier for `patches/abd/*.patch` on top of the submodule SHA.                    |
 | `scripts/predict_local.py`                     | Single-GPU predict shim (uses upstream Albunet/SemSeg unchanged; skips DDP/NCCL).            |

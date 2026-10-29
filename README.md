@@ -90,27 +90,45 @@ flowchart LR
 
 Micro-averaged precision / recall / F1 across sampled tiles per AOI
 (IoU threshold 0.5, 800-chip cluster near AOI centroid, seed
-`20260911`). Every number here is regenerable from the corresponding
-Parquet via `scripts/aoi_summary.py`. These are **baseline** numbers
+`20260911`), with 95 % non-parametric bootstrap CIs (2000 resamples,
+seed 0). Every number is regenerable from the corresponding Parquet
+via `scripts/baseline_ci_table.py`. These are **baseline** numbers
 (unmodified `neat-fullxview-epoch75` checkpoint); Phase 1 fine-tuned
 numbers land in [`docs/results.md`](docs/results.md) after a GPU run.
 
-| AOI            | n_tiles | precision | recall |   F1  | count_ratio | merge_rate | split_rate | pixel_iou_median | Chamfer_median (m) |
-|----------------|--------:|----------:|-------:|------:|------------:|-----------:|-----------:|-----------------:|-------------------:|
-| AOI_2_Vegas    |      43 |    0.510  | 0.373  | 0.431 |     0.730   |   0.163    |   0.018    |            0.625 |               1.40 |
-| AOI_3_Paris    |      64 |    0.290  | 0.272  | 0.281 |     0.938   |   0.049    |   0.005    |            0.462 |               1.43 |
-| AOI_4_Shanghai |      32 |    0.211  | 0.139  | 0.167 |     0.656   |   0.129    |   0.010    |            0.314 |               2.31 |
-| AOI_5_Khartoum |      18 |    0.259  | 0.143  | 0.184 |     0.550   |   0.190    |   0.020    |            0.439 |               1.70 |
+| AOI | n_tiles | precision [CI] | recall [CI] | F1 [CI] | merge_rate [CI] | pixel_IoU_median [CI] | Chamfer_median_m [CI] |
+|---|--:|---|---|---|---|---|---|
+| AOI_2_Vegas | 43 | 0.510 [0.467, 0.553] | 0.373 [0.323, 0.429] | 0.431 [0.383, 0.479] | 0.163 [0.132, 0.196] | 0.625 [0.608, 0.659] | 1.40 [1.35, 1.51] |
+| AOI_3_Paris | 64 | 0.290 [0.260, 0.320] | 0.272 [0.234, 0.311] | 0.281 [0.250, 0.310] | 0.049 [0.029, 0.071] | 0.462 [0.430, 0.471] | 1.43 [1.25, 1.59] |
+| AOI_4_Shanghai | 32 | 0.211 [0.156, 0.266] | 0.139 [0.095, 0.216] | 0.167 [0.123, 0.228] | 0.129 [0.081, 0.188] | 0.314 [0.207, 0.456] | 2.31 [1.60, 2.77] |
+| AOI_5_Khartoum | 18 | 0.259 [0.205, 0.324] | 0.143 [0.109, 0.184] | 0.184 [0.144, 0.233] | 0.190 [0.152, 0.227] | 0.439 [0.377, 0.498] | 1.70 [1.33, 2.14] |
 
-What those numbers say in plain terms: the pretrained model generalises
-to Vegas (dense, regular grid, similar to xBD training imagery) at ~43 %
-F1 and degrades to ~17 – 18 % in Shanghai (dense informal urban) and
-Khartoum (sparse buildings, strong atmospheric haze). With only four
-AOIs the Shanghai–Khartoum ordering is well within bootstrap-CI noise;
-the headline is that the model degrades most on the AOIs least like
-the training distribution, not that it drops in a strict order. Merge
-rate rises with building density, which is the direct motivation for
-Phase 2's touching-building separation work.
+**Sample sizes are deliberately small** (18 – 64 tiles per AOI,
+each tile ~250 m square at z=17 / 0.5 m/px): the fetch, mosaic, and
+eval stages are expensive, and 150 chip-sampled tiles per AOI with
+`min_valid_fraction=1.0` leaves only the above after rejecting tiles
+with nodata gaps. That is **why every number ships with a bootstrap
+CI** rather than as a point estimate — it is the only way to compare
+AOIs honestly at this n.
+
+What those numbers say in plain terms:
+
+- **Vegas sits in its own tier**: F1 CI [0.383, 0.479], no overlap
+  with any other AOI.
+- **Paris is clearly below Vegas and clearly above the other two**:
+  F1 CI [0.250, 0.310], disjoint from Vegas and from both Shanghai
+  and Khartoum.
+- **Shanghai (F1 CI [0.123, 0.228]) and Khartoum (F1 CI [0.144,
+  0.233]) overlap substantially** — at this sample size the pair
+  is statistically indistinguishable. The honest headline is three
+  tiers (Vegas → Paris → {Shanghai, Khartoum}), not a monotonic
+  four-way ranking.
+
+The pattern that *is* defensible: the model degrades most on the AOIs
+visually least like xBD (sparse Khartoum, informal-urban Shanghai),
+and merge rate rises with building density. That merge-rate pattern
+is the direct motivation for Phase 2's touching-building separation
+work.
 
 Full per-AOI table, stratified breakdowns and interpretation notes in
 [`docs/results.md`](docs/results.md).
