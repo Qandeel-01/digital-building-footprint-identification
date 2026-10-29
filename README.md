@@ -1,5 +1,9 @@
 # building-footprint-benchmark
 
+[![ci](https://github.com/Qandeel-01/digital-building-footprint-identification/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Qandeel-01/digital-building-footprint-identification/actions/workflows/ci.yml)
+[![docker-build](https://github.com/Qandeel-01/digital-building-footprint-identification/actions/workflows/docker-build.yml/badge.svg?branch=main)](https://github.com/Qandeel-01/digital-building-footprint-identification/actions/workflows/docker-build.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Reproducible harness for benchmarking an open-source building-footprint
 detector (AlbuNet / U-Net + ResNet, trained on xBD) across four
 SpaceNet 2 regions: **Vegas, Paris, Shanghai, Khartoum**.
@@ -100,11 +104,13 @@ numbers land in [`docs/results.md`](docs/results.md) after a GPU run.
 
 What those numbers say in plain terms: the pretrained model generalises
 to Vegas (dense, regular grid, similar to xBD training imagery) at ~43 %
-F1 and degrades monotonically as the AOI's visual domain drifts from
-xBD — down to ~17 % in Shanghai (dense informal urban) and ~18 % in
-Khartoum (sparse buildings, strong atmospheric haze). Merge rate rises
-with building density, which is the direct motivation for Phase 2's
-touching-building separation work.
+F1 and degrades to ~17 – 18 % in Shanghai (dense informal urban) and
+Khartoum (sparse buildings, strong atmospheric haze). With only four
+AOIs the Shanghai–Khartoum ordering is well within bootstrap-CI noise;
+the headline is that the model degrades most on the AOIs least like
+the training distribution, not that it drops in a strict order. Merge
+rate rises with building density, which is the direct motivation for
+Phase 2's touching-building separation work.
 
 Full per-AOI table, stratified breakdowns and interpretation notes in
 [`docs/results.md`](docs/results.md).
@@ -119,10 +125,13 @@ confidence bands per bin.
 
 Reading this: Vegas (blue) is roughly flat across density bins — the
 model handles both low- and high-density areas comparably. Shanghai
-(green) and Khartoum (red) both drop sharply in the lowest-density
-bins and never recover; the baseline model is systematically worse on
-AOIs with visual characteristics far from xBD regardless of local
-density.
+(green) and Khartoum (red) are consistently lower, including in the
+lowest-density bins where the "merger" explanation does not apply.
+AOI-level performance differences are therefore not reducible to
+local density alone; whatever the baseline is missing in those
+regions it misses at every density. Phase 1 fine-tuning is the next
+step; a Phase 1 overlay version of this figure will land under
+`docs/results-figures/` once the GPU runs complete.
 
 <details>
 <summary>Density-window robustness (100 m and 500 m)</summary>
