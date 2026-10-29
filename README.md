@@ -25,12 +25,71 @@ equal-area CRS assertion running through every area / distance /
 density computation. Nothing is quoted anywhere without a Parquet row
 behind it.
 
+## Pipeline at a glance
+
+```mermaid
+flowchart LR
+    S3[("SpaceNet 2 S3<br/>PS-RGB chips + geojson")]
+    W[("Pretrained AlbuNet<br/>neat-fullxview-epoch75")]
+
+    subgraph Prep["bfbench prepare"]
+        F[fetch chips] --> M[mosaic.vrt] --> R[reference.geojson<br/>dedup + merge]
+        R --> SAMP[sampled_tiles.json<br/>seeded, deterministic]
+        SAMP --> SPLIT[block_split.json<br/>1 km geographic, 70/15/15]
+    end
+
+    subgraph Run["bfbench run-prepared"]
+        A[adapt → tiles/z/x/y.png<br/>0.5 m/px, 512×512] --> P[predict<br/>Albunet]
+        P --> V[vectorize + filter] --> G[predicted.geojson]
+    end
+
+    subgraph Train["bfbench train (Phase 1, GPU)"]
+        FT[fine-tune AlbuNet<br/>AMP, BCE+Dice, AdamW]
+        FT --> CKPT[best.pth + sha256]
+    end
+
+    subgraph Eval["bfbench eval"]
+        E[per-tile metrics<br/>P/R/F1, merge/split,<br/>pixel IoU, Chamfer] --> PQ[results.parquet]
+    end
+
+    S3 --> F
+    W --> P
+    W --> FT
+    SPLIT --> FT
+    CKPT -. fine-tuned mode .-> P
+    SAMP --> E
+    G --> E
+    R --> E
+```
+
+Each box is one stage in `src/bfbench/`; see
+[`CONTRIBUTIONS.md`](CONTRIBUTIONS.md) for the file-by-file breakdown.
+
+## Phase roadmap
+
+```mermaid
+flowchart LR
+    P0["Phase 0 — reproducibility<br/>Docker + CI + patches as PR drafts<br/>✓ shipped"]
+    P1["Phase 1 — domain adaptation<br/>fine-tune on SpaceNet blocks<br/>✓ code shipped, GPU runs pending"]
+    P2["Phase 2 — separate touching buildings<br/>(a) 3-class target<br/>(b) watershed instance-sep<br/>⚑ next"]
+    P3["Phase 3 — encoder comparison<br/>LinkNet / ResNet34 / ResNeXt50 / WideResNet50<br/>planned"]
+    P4["Phase 4 — Copernicus flood case study<br/>Pakistan Sindh 2022, Sentinel-1 VV<br/>planned"]
+    P0 --> P1 --> P2 --> P3 --> P4
+    style P0 fill:#d1fae5,stroke:#059669
+    style P1 fill:#d1fae5,stroke:#059669
+    style P2 fill:#fef3c7,stroke:#d97706
+    style P3 fill:#f3f4f6,stroke:#6b7280
+    style P4 fill:#f3f4f6,stroke:#6b7280
+```
+
 ## Results
 
 Micro-averaged precision / recall / F1 across sampled tiles per AOI
 (IoU threshold 0.5, 800-chip cluster near AOI centroid, seed
 `20260911`). Every number here is regenerable from the corresponding
-Parquet via `scripts/aoi_summary.py`.
+Parquet via `scripts/aoi_summary.py`. These are **baseline** numbers
+(unmodified `neat-fullxview-epoch75` checkpoint); Phase 1 fine-tuned
+numbers land in [`docs/results.md`](docs/results.md) after a GPU run.
 
 | AOI            | n_tiles | precision | recall |   F1  | count_ratio | merge_rate | split_rate | pixel_iou_median | Chamfer_median (m) |
 |----------------|--------:|----------:|-------:|------:|------------:|-----------:|-----------:|-----------------:|-------------------:|
@@ -38,6 +97,14 @@ Parquet via `scripts/aoi_summary.py`.
 | AOI_3_Paris    |      64 |    0.290  | 0.272  | 0.281 |     0.938   |   0.049    |   0.005    |            0.462 |               1.43 |
 | AOI_4_Shanghai |      32 |    0.211  | 0.139  | 0.167 |     0.656   |   0.129    |   0.010    |            0.314 |               2.31 |
 | AOI_5_Khartoum |      18 |    0.259  | 0.143  | 0.184 |     0.550   |   0.190    |   0.020    |            0.439 |               1.70 |
+
+What those numbers say in plain terms: the pretrained model generalises
+to Vegas (dense, regular grid, similar to xBD training imagery) at ~43 %
+F1 and degrades monotonically as the AOI's visual domain drifts from
+xBD — down to ~17 % in Shanghai (dense informal urban) and ~18 % in
+Khartoum (sparse buildings, strong atmospheric haze). Merge rate rises
+with building density, which is the direct motivation for Phase 2's
+touching-building separation work.
 
 Full per-AOI table, stratified breakdowns and interpretation notes in
 [`docs/results.md`](docs/results.md).
@@ -50,9 +117,24 @@ confidence bands per bin.
 
 ![F1 vs density 200 m](docs/results-figures/f1_vs_density_w200.png)
 
-Density-window robustness at 100 m and 500 m windows:
-[`f1_vs_density_w100.png`](docs/results-figures/f1_vs_density_w100.png),
-[`f1_vs_density_w500.png`](docs/results-figures/f1_vs_density_w500.png).
+Reading this: Vegas (blue) is roughly flat across density bins — the
+model handles both low- and high-density areas comparably. Shanghai
+(green) and Khartoum (red) both drop sharply in the lowest-density
+bins and never recover; the baseline model is systematically worse on
+AOIs with visual characteristics far from xBD regardless of local
+density.
+
+<details>
+<summary>Density-window robustness (100 m and 500 m)</summary>
+
+![F1 vs density 100 m](docs/results-figures/f1_vs_density_w100.png)
+![F1 vs density 500 m](docs/results-figures/f1_vs_density_w500.png)
+
+The 100 m window is noisier (fewer buildings per window → higher
+sampling variance); the 500 m window washes out intra-AOI gradients
+but the AOI-level ordering is identical. 200 m is the default used
+by figures and stratified tables for this reason.
+</details>
 
 ### F1 vs building-size decile
 
@@ -60,12 +142,23 @@ F1 binned by the per-tile median reference building area (m²).
 
 ![F1 vs size decile](docs/results-figures/f1_vs_size_decile.png)
 
+Small-building deciles (left) tie all four AOIs together at low F1 —
+the baseline struggles with ≲ 40 m² buildings everywhere. The AOI gap
+opens up on medium / large buildings, which is where Vegas's regular
+suburban layout plays to the model's training distribution.
+
 ### Merge rate vs local density
 
-Merger events (one prediction covering >= 2 reference buildings)
-scale with local density.
+Merger events (one prediction covering ≥ 2 reference buildings) scale
+with local density.
 
 ![merge rate vs density](docs/results-figures/merge_rate_vs_density_w200.png)
+
+This is the Phase 2 motivation plot: merges rise with density on
+every AOI. Phase 2a (3-class training with a border class) and 2b
+(watershed instance separation at inference time) both target this
+trend directly. The comparison re-plot — baseline / Phase 1 /
+Phase 2a / Phase 2b overlaid — is produced after those phases run.
 
 ### Qualitative panels (imagery / prediction / reference)
 
@@ -80,6 +173,114 @@ counts appear on the figures.
 | Shanghai | Khartoum |
 | -------- | -------- |
 | ![Shanghai](docs/results-figures/qualitative_shanghai.png) | ![Khartoum](docs/results-figures/qualitative_khartoum.png) |
+
+What to look at on these: the "worst" column shows the model
+consistently merging rows of adjacent dwellings in the dense AOIs,
+and dropping thin / long polygons in Khartoum where the training
+distribution's rectilinear building prior does not hold.
+
+## Phase 0 — Reproducibility
+
+A deterministic reproduction surface that fits on one laptop and in
+one CI job:
+
+- **Dockerfile** at the repo root — `nvidia/cuda:12.8.0-runtime-
+  ubuntu22.04` base, miniforge, env from `environment.yml` (no
+  duplicated pins), upstream `external/abd` submodule copied in with
+  `patches/abd/*.patch` applied via the same `apply_upstream_patches.py`
+  script used on the host.
+- **`docker-compose.yml`** for the one-AOI smoke stack (10 chips of
+  Vegas via `configs/spacenet_vegas_smoke.yaml`), with GPU reservation
+  and bind-mounts for `weights/` and `runs/`.
+- **`Makefile`** wrappers: `make docker-build`, `make docker-smoke`,
+  `make lint`, `make test`.
+- **`.github/workflows/docker-build.yml`** — buildx + GitHub Actions
+  cache (`type=gha`, `mode=max`). Build-only in CI; no GPU, no
+  weights fetch, no SpaceNet download. First build is ~15–25 min;
+  subsequent ones reuse the heavy env layer.
+- **Five upstream patches** are documented as per-branch PR drafts
+  under [`docs/upstream-prs/`](docs/upstream-prs/) with title,
+  problem, minimal repro, fix diff, and regression test for each.
+
+Rationale, base-image choice, and limitations are documented in
+[`docs/phase0-decisions.md`](docs/phase0-decisions.md). All of this is
+covered by `tests/test_dockerfile.py` and
+`tests/test_phase0_smoke_assets.py` (18 static assertions that CI
+runs on every push).
+
+## Phase 1 — Domain-adaptation fine-tuning
+
+Phase 1 fine-tunes the baseline AlbuNet on SpaceNet 2 training blocks
+per AOI (and one pooled model across all four), evaluated on held-out
+geographic blocks. Code is shipped; the GPU runs happen on
+Kaggle/Colab via [`scripts/kaggle_phase1.py`](scripts/kaggle_phase1.py).
+
+### Geographic block split
+
+Spatially random tile splits leak information: a building that
+straddles two adjacent tiles ends up in both train and test. The
+split is therefore block-based in an equal-area CRS (EPSG:6933):
+
+```mermaid
+flowchart LR
+    T[["400 sampled tiles<br/>per AOI (seeded)"]] --> C[(centroid in<br/>EPSG:6933)]
+    C --> G["1 km grid<br/>regular blocks<br/>origin snapped to multiples of 1 km"]
+    G --> H["sha256(seed, i, j)<br/>→ uniform [0,1)"]
+    H --> R{"ratio bucket<br/>70 / 15 / 15"}
+    R -->|u &lt; 0.70| TR[["train blocks"]]
+    R -->|0.70 ≤ u &lt; 0.85| VL[["val blocks"]]
+    R -->|u ≥ 0.85| TE[["test blocks"]]
+    TR -.pytest.-> Z["<b>zero polygon-intersection</b><br/>between train and test unions<br/>(asserted in test_block_split.py)"]
+    TE -.pytest.-> Z
+```
+
+Determinism is pinned by `SplitResult.assignment_hash` (sha256 of the
+canonicalised `(i, j, split)` list). Two runs with the same seed and
+tile set produce byte-identical splits.
+
+### Training recipe (defaults, overridable in YAML)
+
+| field | default | reasoning |
+|---|---|---|
+| optimizer | AdamW | adaptive LR tolerates per-AOI dataset-size differences |
+| learning rate | 1e-4 | 10× smaller than training-from-scratch; standard for fine-tuning |
+| weight decay | 1e-4 | mild; the baseline already generalises |
+| scheduler | cosine warm restarts (T₀=5) | lets LR revisit the useful range after plateaus |
+| batch size | 4 | 512×512 RGB × fp16 fits in ~10 GB with Albunet |
+| epochs | 30 | early-stop on val loss, patience 5 |
+| loss | BCE + Dice (0.5 / 0.5) | standard binary-seg baseline |
+| mixed precision | fp16 via `torch.amp` | required to fit batch size 4 on 16 GB |
+| augmentation | none | fine-tuning gains should come from the SpaceNet domain, not from aug choices |
+| seed | 20260911 | same seed used everywhere else in the pipeline |
+
+Full rationale in [`docs/phase1-decisions.md`](docs/phase1-decisions.md).
+
+### What gets reported
+
+Per-AOI (and pooled) comparison tables with 95 % bootstrap CIs on
+precision, recall, F1, merge rate, split rate, pixel IoU, Chamfer.
+Produced by `scripts/compare_baseline_vs_finetuned.py` after the
+Kaggle run. Numbers land in `runs/<aoi>_prepare/eval/comparison_<AOI>.json`
+and are rendered into [`docs/results.md`](docs/results.md); the
+"typed by hand" path is a hard no.
+
+## Phase 2 — Separating touching buildings (next)
+
+- **(a) 3-class target**: train with `{bg, interior, border}` masks
+  where border = pixels inside a building whose nearest *other*
+  building boundary is ≤ 3 m. Model's final conv becomes 3-channel
+  softmax; CE loss replaces BCE+Dice. Inference extracts the
+  interior class and vectorises as today.
+- **(b) Watershed instance separation**: pure post-processing on the
+  per-tile binary mask. Distance transform → local-maxima markers →
+  `skimage.segmentation.watershed`. Drops in behind a
+  `postprocess.method: watershed` config flag on `bfbench run-prepared`.
+  No retraining; works on top of baseline or Phase 1 checkpoints.
+
+Comparison plot: merge rate vs density (200 m window) overlaid for
+baseline / Phase 1 / Phase 2a / Phase 2b. The baseline plot above is
+the "before"; the Phase 2 version lands next to it when both runs
+complete.
 
 ## Provenance
 
@@ -148,23 +349,35 @@ and the same code works):
 pytest tests/test_real_figures_integration.py tests/test_qualitative_panels_all_aois.py
 ```
 
-## Phase 1 — domain-adaptation fine-tuning
+For Phase 1 fine-tuning on Kaggle / Colab (GPU required):
 
-Phase 1 fine-tunes the baseline AlbuNet on SpaceNet 2 training blocks
-per AOI (and one pooled model), evaluated on held-out geographic
-blocks (1 km × 1 km, 70/15/15, deterministic). The split, hyper-
-parameters, and bootstrap CI protocol are documented in
-[`docs/phase1-decisions.md`](docs/phase1-decisions.md). The GPU
-runbook — intended for Kaggle or Colab — is in
-[`scripts/kaggle_phase1.py`](scripts/kaggle_phase1.py). Numbers land
-in `runs/<aoi>_prepare/eval/comparison_<AOI>.json` and are rendered
-into [`docs/results.md`](docs/results.md); nothing is typed in by
-hand.
+```bash
+# per AOI (repeat for paris / shanghai / khartoum)
+bfbench prepare   configs/spacenet_vegas_phase1.yaml
+bfbench run-prepared configs/spacenet_vegas_phase1.yaml --stop-after adapt
+bfbench train    configs/spacenet_vegas_phase1.yaml
+bfbench run-prepared configs/spacenet_vegas_phase1.yaml
+bfbench eval     configs/spacenet_vegas_phase1.yaml
+
+# re-score the baseline on the Phase 1 test blocks (apples-to-apples)
+python scripts/kaggle_phase1.py evaluate-baseline-on-phase1-tiles \
+    configs/spacenet_vegas_phase1.yaml
+
+# produce the comparison table + markdown
+python scripts/kaggle_phase1.py build-comparison \
+    configs/spacenet_vegas_phase1.yaml
+```
 
 ## Design decisions
 
 Written up rather than embedded silently in code:
 
+- [`docs/phase0-decisions.md`](docs/phase0-decisions.md) — Docker base
+  image, env.yml reuse, patch-applier placement, CI build-only
+  rationale, limitations.
+- [`docs/phase1-decisions.md`](docs/phase1-decisions.md) — block
+  split, hyperparams, BCE+Dice vs Focal, pooled-val choice, GPU
+  runbook.
 - [`docs/adapter-decisions.md`](docs/adapter-decisions.md) — GSD
   resampling, tile size, border handling, and the Phase-3 GSD sweep
   (which invalidated the Phase-2 table because that table had been
@@ -181,35 +394,43 @@ Written up rather than embedded silently in code:
   dedup rule for the reference layer.
 - [`docs/environment-notes.md`](docs/environment-notes.md) — every
   deviation from upstream's pinned deps, the Windows / NCCL story,
-  and the re-pinning procedure.
+  the Windows OpenMP note, and the re-pinning procedure.
 
 ## Layout
 
 ```
 building-footprint-benchmark/
-├── external/abd/            # upstream submodule (pinned)
-├── src/bfbench/             # this project's code
-│   ├── data/                # SpaceNet fetcher, mosaic, adapter,
-│   │                        # dedup, sampling, summary, equal-area
-│   ├── metrics/             # instance, pixel, count, boundary,
-│   │                        # stratify -- all implemented
-│   ├── prepare.py           # `bfbench prepare`
-│   ├── run_prepared.py      # `bfbench run-prepared`
-│   ├── eval.py              # `bfbench eval`
-│   └── cli.py               # `bfbench` entry point
-├── configs/                 # one YAML per AOI
-├── scripts/                 # chip selection, weight fetch, figures,
-│                            # verifier, patch applier
-├── tests/                   # ~93 tests, incl. equal-area, metrics,
-│                            # eval end-to-end, patch verification
-├── docs/                    # decisions, results, upstream PR repros
-├── patches/abd/             # five upstream patches
-├── .github/workflows/       # ruff + pytest CI
+├── Dockerfile                 # Phase 0: cuda12.8-runtime + env + abd
+├── docker-compose.yml         # one-AOI smoke stack
+├── Makefile                   # docker-build / docker-smoke / lint / test
+├── external/abd/              # upstream submodule (pinned SHA)
+├── src/bfbench/               # this project's code
+│   ├── data/                  # SpaceNet fetcher, mosaic, adapter,
+│   │                          # dedup, sampling, summary, equal-area,
+│   │                          # block_split (Phase 1)
+│   ├── metrics/               # instance, pixel, count, boundary,
+│   │                          # stratify, bootstrap (Phase 1)
+│   ├── train/                 # Phase 1: dataset / loop / manifest
+│   ├── train_cli.py           # Phase 1: `bfbench train`
+│   ├── prepare.py             # `bfbench prepare`
+│   ├── run_prepared.py        # `bfbench run-prepared`
+│   ├── eval.py                # `bfbench eval`
+│   └── cli.py                 # `bfbench` entry point
+├── configs/                   # one YAML per AOI (Phase 2/3 + Phase 1)
+├── scripts/                   # chip selection, weight fetch, figures,
+│                              # Docker smoke, Kaggle runbook, Phase 1
+│                              # comparison, verifier, patch applier
+├── tests/                     # ~155 tests: equal-area, metrics, eval,
+│                              # block split, bootstrap, training,
+│                              # Dockerfile static checks, patch verif
+├── docs/                      # decisions, results, upstream PR repros
+├── patches/abd/               # five upstream patches
+├── .github/workflows/         # ruff + pytest CI, docker-build CI
 ├── environment.yml
 ├── pyproject.toml
-├── LICENSE                  # MIT, Qandeel Fatima 2026
-├── NOTICE                   # upstream attribution
-└── CONTRIBUTIONS.md         # file-by-file: mine vs upstream
+├── LICENSE                    # MIT, Qandeel Fatima 2026
+├── NOTICE                     # upstream attribution
+└── CONTRIBUTIONS.md           # file-by-file: mine vs upstream
 ```
 
 ## Reporting rules
@@ -222,7 +443,9 @@ number on their data and does not appear here as ours.
 Equal-area CRS is enforced by assertion (`bfbench.data.equal_area`)
 inside every metric that touches area, distance or density. Sampling
 is seeded and deterministic: the same config + seed produces
-byte-identical tile IDs.
+byte-identical tile IDs. Fine-tuned checkpoints ship with a sibling
+`.sha256.json` and a `training_manifest.json` recording the full
+provenance chain; the manifest writer refuses to write a stale sha.
 
 ## License
 
