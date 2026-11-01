@@ -1,0 +1,53 @@
+# Phase 2b config for AOI_3_Paris: inference-time watershed on Phase 1
+# fine-tuned binary checkpoint. See spacenet_vegas_phase2b.yaml.
+
+aoi:
+  name: AOI_3_Paris
+  provider: spacenet2
+  aoi_id: 3
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+  chip_ids_source: runs/paris_prepare/chip_selection.json
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 400
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+split:
+  block_size_m: 1000.0
+  ratios: [0.70, 0.15, 0.15]
+  seed: 20260911
+
+abd:
+  config: external/abd/input/config.toml
+  checkpoint: runs/paris_prepare/train/best.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/paris_prepare
+
+postprocess:
+  method: watershed
+  min_marker_distance_m: 5.0
+  prob_threshold: 0.5
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

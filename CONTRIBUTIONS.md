@@ -36,9 +36,18 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `configs/spacenet_shanghai_phase1.yaml`        | Phase 1 config (Shanghai).                                                                   |
 | `configs/spacenet_khartoum_phase1.yaml`        | Phase 1 config (Khartoum).                                                                   |
 | `configs/spacenet_pooled_phase1.yaml`          | Phase 1 pooled config: concatenates all four AOIs' train/val blocks.                         |
+| `configs/spacenet_vegas_phase2a.yaml`          | Phase 2a 3-class training config (Vegas).                                                     |
+| `configs/spacenet_paris_phase2a.yaml`          | Phase 2a (Paris).                                                                             |
+| `configs/spacenet_shanghai_phase2a.yaml`       | Phase 2a (Shanghai).                                                                          |
+| `configs/spacenet_khartoum_phase2a.yaml`       | Phase 2a (Khartoum).                                                                          |
+| `configs/spacenet_vegas_phase2b.yaml`          | Phase 2b watershed-postprocess config (Vegas, Phase 1 ckpt).                                 |
+| `configs/spacenet_paris_phase2b.yaml`          | Phase 2b (Paris).                                                                             |
+| `configs/spacenet_shanghai_phase2b.yaml`       | Phase 2b (Shanghai).                                                                          |
+| `configs/spacenet_khartoum_phase2b.yaml`       | Phase 2b (Khartoum).                                                                          |
 | `docs/environment-notes.md`                    | Every deviation from upstream requirements.txt, patch rationale, Windows NCCL note.          |
 | `docs/phase0-decisions.md`                     | Base-image choice, env.yml reuse, patch-applier placement, CI build-only rationale.          |
 | `docs/phase1-decisions.md`                     | Block-split rationale, fine-tuning hyperparams, bootstrap CI protocol, GPU runbook.          |
+| `docs/phase2-decisions.md`                     | 3-class target definition, border-distance default, watershed-marker default, scope.          |
 | `docs/adapter-decisions.md`                    | Rationale for GSD resampling + tile size + border handling. Phase 3 GSD sweep replaces Phase 2. |
 | `docs/metric-decisions.md`                     | Phase 3 spec calls (asymmetry, centre-only, raster pixel_iou, required window_m, ...).          |
 | `docs/reproduce.md`                            | From-clean-clone runbook.                                                                    |
@@ -55,6 +64,10 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `src/bfbench/data/reference.py`                | Chip-geojson merge + dedup on seams (Task 1c).                                               |
 | `src/bfbench/data/sampling.py`                 | Deterministic seeded tile sampling (Task 1d).                                                |
 | `src/bfbench/data/block_split.py`              | Phase 1: geographic 1 km block train/val/test splitter in EPSG:6933.                        |
+| `src/bfbench/data/three_class.py`              | Phase 2a: 3-class target mask builder with touching-pair border rule.                        |
+| `src/bfbench/postprocess/__init__.py`          | Phase 2: postprocess package re-exports (argmax_interior + watershed_split_mask).            |
+| `src/bfbench/postprocess/three_class.py`       | Phase 2a: carve class 1 out of a 3-class model output and emit a binary mask.                 |
+| `src/bfbench/postprocess/watershed.py`         | Phase 2b: watershed instance separation on a per-tile mask + optional probability map.       |
 | `src/bfbench/data/summary.py`                  | Per-AOI descriptive stats (Task 1e).                                                         |
 | `src/bfbench/prepare.py`                       | `bfbench prepare`: fetch -> mosaic -> merge references -> sample tiles -> summarise.          |
 | `src/bfbench/metrics/pixel.py`                 | `pixel_iou` (raster interface, centre-only default; Phase 3 implemented).                     |
@@ -75,6 +88,8 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `scripts/docker_smoke.sh`                      | Phase 0 one-AOI entrypoint: asserts checkpoint, runs prepare->run-prepared->eval.             |
 | `scripts/compare_baseline_vs_finetuned.py`     | Phase 1: reads two eval parquets + emits markdown + JSON with 95% bootstrap CIs.             |
 | `scripts/baseline_ci_table.py`                 | Produce the README baseline table with 95% bootstrap CIs (P/R/F1 + merge + pixel_IoU + Chamfer). |
+| `scripts/watershed_vectorize.py`               | Phase 2b: standalone drop-in for `abd vectorize` with watershed instance separation.           |
+| `scripts/merge_rate_overlay.py`                | Phase 2: 4-series overlay (baseline / Phase 1 / 2a / 2b) of merge rate vs local density.      |
 | `scripts/kaggle_phase1.py`                     | Phase 1: GPU runbook orchestrator (prepare -> adapt -> train -> eval -> baseline rescore).   |
 | `scripts/apply_upstream_patches.py`            | Idempotent applier for `patches/abd/*.patch` on top of the submodule SHA.                    |
 | `scripts/predict_local.py`                     | Single-GPU predict shim (uses upstream Albunet/SemSeg unchanged; skips DDP/NCCL).            |
@@ -109,6 +124,9 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `tests/test_train_manifest.py`                 | Phase 1: training manifest schema + sha256 pinning tests.                                    |
 | `tests/test_prepare_split_integration.py`      | Phase 1: `_geo_split` emits disjoint tile sets; train_cli rejects configs without split/train.|
 | `tests/test_compare_baseline_vs_finetuned.py`  | Phase 1: toy-parquet comparison test (shared-tile intersection + point estimates + schema).  |
+| `tests/test_three_class.py`                    | Phase 2a: touching-pair border mask invariants (isolated / pair / three-in-a-row).            |
+| `tests/test_watershed.py`                      | Phase 2b: isolated-blob -> 1 label; touching discs -> 2 labels; gap-insertion + config.      |
+| `tests/test_three_class_training.py`           | Phase 2a: dataset shape in 3class mode, CE loss, loop writes `shape_out=(3,...)` checkpoint. |
 
 Everything under `runs/`, `weights/`, `data/`, `output/` is gitignored
 and produced by running the pipeline; it is not committed.

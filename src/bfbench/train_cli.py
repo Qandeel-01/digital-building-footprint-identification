@@ -43,10 +43,14 @@ import geopandas as gpd
 import mercantile
 import yaml
 
+from bfbench.data.three_class import N_CLASSES, ThreeClassConfig
 from bfbench.train.dataset import BuildingTileDataset
 from bfbench.train.loop import (
     TrainConfig,
+    bce_dice_loss,
     build_albunet_from_checkpoint,
+    cross_entropy_3class_loss,
+    rebuild_final_conv_for_three_class,
     seed_everything,
     train_one_run,
 )
@@ -76,6 +80,8 @@ class _TrainYAML:
     split_seed: int
     split_block_size_m: float
     split_ratios: tuple[float, float, float]
+    target_mode: str
+    border_distance_m: float
 
 
 def _load(cfg_path: Path) -> _TrainYAML:
@@ -109,6 +115,8 @@ def _load(cfg_path: Path) -> _TrainYAML:
         split_seed=int(sp["seed"]),
         split_block_size_m=float(sp["block_size_m"]),
         split_ratios=tuple(float(r) for r in sp["ratios"]),  # type: ignore[arg-type]
+        target_mode=str(tr.get("target_mode", "binary")),
+        border_distance_m=float(tr.get("border_distance_m", 3.0)),
     )
 
 
@@ -175,6 +183,8 @@ def train(cfg_path: Path) -> Path:
     # torch.utils.data.ConcatDataset so the loop is unchanged.
     from torch.utils.data import ConcatDataset  # noqa: PLC0415 - lazy torch import
 
+    tc_cfg = ThreeClassConfig(border_distance_m=yml.border_distance_m)
+
     def _build_ds(work_dir: Path, tiles: list[mercantile.Tile]) -> BuildingTileDataset:
         return BuildingTileDataset(
             tiles=tiles,
@@ -183,6 +193,8 @@ def train(cfg_path: Path) -> Path:
             channel_name=yml.channel_name,
             tile_size=yml.tile_size,
             extension=".png",
+            target_mode=yml.target_mode,
+            three_class_cfg=tc_cfg,
         )
 
     train_dss = [_build_ds(yml.work_dir, _tiles_from(_read_split(yml.work_dir)["train"]))]
@@ -202,6 +214,16 @@ def train(cfg_path: Path) -> Path:
         )
     model, source_meta = build_albunet_from_checkpoint(yml.source_weight,
                                                       device="cpu")
+    # Phase 2a: swap the 1-channel final conv for a 3-channel one and
+    # warm-start the "interior" channel from the pretrained binary
+    # filter. source_meta.shape_out is updated so the saved checkpoint
+    # declares (3, H, W), which is what run-prepared keys off to route
+    # the output through the 3-class postprocess.
+    if yml.target_mode == "3class":
+        model = rebuild_final_conv_for_three_class(model, num_classes=N_CLASSES)
+        shape_out = source_meta.get("shape_out")
+        if shape_out is not None:
+            source_meta["shape_out"] = (N_CLASSES, int(shape_out[1]), int(shape_out[2]))
     source_sha = sha256_file(yml.source_weight)
     config_sha = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
 
@@ -226,7 +248,8 @@ def train(cfg_path: Path) -> Path:
         weight_decay=yml.weight_decay,
         amp=yml.amp,
         patience=yml.patience,
-        loss="bce_dice",
+        loss=("cross_entropy_3class" if yml.target_mode == "3class"
+              else "bce_dice"),
         optimizer="AdamW",
         scheduler="cosine_warm_restarts",
     )
@@ -243,6 +266,8 @@ def train(cfg_path: Path) -> Path:
         device="cuda",   # falls back to cpu inside train_one_run if unavailable
     )
 
+    loss_fn = (cross_entropy_3class_loss if yml.target_mode == "3class"
+               else bce_dice_loss)
     result = train_one_run(
         cfg=tcfg,
         train_dataset=train_ds,
@@ -251,6 +276,7 @@ def train(cfg_path: Path) -> Path:
         source_weight_path=yml.source_weight,
         output_dir=yml.output_dir,
         manifest=manifest,
+        loss_fn=loss_fn,
         source_checkpoint_meta=source_meta,
     )
     return result.manifest_path

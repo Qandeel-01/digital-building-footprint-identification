@@ -75,13 +75,13 @@ Each box is one stage in `src/bfbench/`; see
 flowchart LR
     P0["Phase 0 — reproducibility<br/>Docker + CI + patches as PR drafts<br/>✓ shipped"]
     P1["Phase 1 — domain adaptation<br/>fine-tune on SpaceNet blocks<br/>✓ code shipped, GPU runs pending"]
-    P2["Phase 2 — separate touching buildings<br/>(a) 3-class target<br/>(b) watershed instance-sep<br/>⚑ next"]
+    P2["Phase 2 — separate touching buildings<br/>(a) 3-class target<br/>(b) watershed instance-sep<br/>✓ code shipped, GPU runs pending"]
     P3["Phase 3 — encoder comparison<br/>LinkNet / ResNet34 / ResNeXt50 / WideResNet50<br/>planned"]
     P4["Phase 4 — Copernicus flood case study<br/>Pakistan Sindh 2022, Sentinel-1 VV<br/>planned"]
     P0 --> P1 --> P2 --> P3 --> P4
     style P0 fill:#d1fae5,stroke:#059669
     style P1 fill:#d1fae5,stroke:#059669
-    style P2 fill:#fef3c7,stroke:#d97706
+    style P2 fill:#d1fae5,stroke:#059669
     style P3 fill:#f3f4f6,stroke:#6b7280
     style P4 fill:#f3f4f6,stroke:#6b7280
 ```
@@ -291,23 +291,34 @@ Kaggle run. Numbers land in `runs/<aoi>_prepare/eval/comparison_<AOI>.json`
 and are rendered into [`docs/results.md`](docs/results.md); the
 "typed by hand" path is a hard no.
 
-## Phase 2 — Separating touching buildings (next)
+## Phase 2 — Separating touching buildings
 
-- **(a) 3-class target**: train with `{bg, interior, border}` masks
-  where border = pixels inside a building whose nearest *other*
-  building boundary is ≤ 3 m. Model's final conv becomes 3-channel
-  softmax; CE loss replaces BCE+Dice. Inference extracts the
-  interior class and vectorises as today.
-- **(b) Watershed instance separation**: pure post-processing on the
-  per-tile binary mask. Distance transform → local-maxima markers →
-  `skimage.segmentation.watershed`. Drops in behind a
-  `postprocess.method: watershed` config flag on `bfbench run-prepared`.
-  No retraining; works on top of baseline or Phase 1 checkpoints.
+Code shipped; GPU runs pending (same Kaggle/Colab path as Phase 1).
+Both options are selected by config, not code:
 
-Comparison plot: merge rate vs density (200 m window) overlaid for
-baseline / Phase 1 / Phase 2a / Phase 2b. The baseline plot above is
-the "before"; the Phase 2 version lands next to it when both runs
-complete.
+- **(a) 3-class target** — `bfbench train configs/spacenet_<aoi>_phase2a.yaml`
+  trains with `{bg, interior, border}` masks where **border = pixels
+  inside a building whose nearest *other* building boundary is ≤ 3 m**.
+  Model's final conv is rebuilt to 3 channels and the interior channel
+  is warm-started from the pretrained binary filter; CE loss replaces
+  BCE+Dice. Inference extracts the interior class
+  (`postprocess.method: argmax_interior`) and vectorises as today.
+  Isolated buildings have no border pixels, so recall on single-building
+  tiles is preserved — see
+  [`docs/phase2-decisions.md`](docs/phase2-decisions.md) for why.
+- **(b) Watershed instance separation** —
+  `bfbench run-prepared configs/spacenet_<aoi>_phase2b.yaml` runs the
+  Phase 1 fine-tuned binary checkpoint, then post-processes with a
+  distance-transform watershed (`skimage.segmentation.watershed` on
+  `-EDT`, markers at local maxima of EDT with min separation 5 m).
+  No retraining; this isolates how much of any Phase 2 gain is
+  inference-side vs training-side.
+
+Comparison plot: `scripts/merge_rate_overlay.py` overlays merge rate
+vs density (200 m window) for all four series (baseline / Phase 1 /
+Phase 2a / Phase 2b) with 95 % bootstrap CI bands. The script is
+tolerant of missing parquets so you can regenerate the figure after
+each phase as parquets land.
 
 ## Provenance
 

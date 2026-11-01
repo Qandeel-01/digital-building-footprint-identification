@@ -1,0 +1,63 @@
+# Phase 2b config for AOI_2_Vegas: inference-time watershed instance
+# separation on top of the Phase 1 fine-tuned binary checkpoint. No
+# retraining; `bfbench train` is NOT run against this config.
+#
+# Workflow:
+#   bfbench prepare       configs/spacenet_vegas_phase2b.yaml
+#   bfbench run-prepared  configs/spacenet_vegas_phase2b.yaml
+#       -> runs `abd predict`, then watershed_vectorize instead of
+#          `abd vectorize`.
+#   bfbench eval          configs/spacenet_vegas_phase2b.yaml
+
+aoi:
+  name: AOI_2_Vegas
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+  chip_ids_source: runs/vegas_prepare/chip_selection.json
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 400
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+split:
+  block_size_m: 1000.0
+  ratios: [0.70, 0.15, 0.15]
+  seed: 20260911
+
+abd:
+  config: external/abd/input/config.toml
+  # Phase 2b uses the Phase 1 fine-tuned binary checkpoint and swaps
+  # the vectorise step for a watershed-based one.
+  checkpoint: runs/vegas_prepare/train/best.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/vegas_prepare
+
+postprocess:
+  method: watershed
+  min_marker_distance_m: 5.0
+  prob_threshold: 0.5
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5

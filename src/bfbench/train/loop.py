@@ -126,7 +126,7 @@ def bce_dice_loss(logits: Any, target: Any,
                   bce_weight: float = 0.5,
                   dice_weight: float = 0.5,
                   smooth: float = 1.0) -> Any:
-    """BCE + soft Dice.
+    """BCE + soft Dice (binary target).
 
     `logits` is (B, 1, H, W) raw model output (NO sigmoid applied yet);
     we use `binary_cross_entropy_with_logits` which is numerically more
@@ -138,6 +138,26 @@ def bce_dice_loss(logits: Any, target: Any,
     denom = probs.sum(dim=(1, 2, 3)) + target.sum(dim=(1, 2, 3))
     dice = 1.0 - ((2 * inter + smooth) / (denom + smooth)).mean()
     return bce_weight * bce + dice_weight * dice
+
+
+def cross_entropy_3class_loss(logits: Any, target: Any,
+                              class_weights: tuple[float, float, float] | None = None,
+                              ) -> Any:
+    """Weighted cross-entropy for 3-class touching-building training.
+
+    `logits` is (B, 3, H, W) raw softmax logits; `target` is (B, H, W)
+    int64 class indices in {0: bg, 1: interior, 2: border}.
+
+    Default class weights are None (uniform). Phase 2a's border class
+    is sparse by construction (only pixels within 3 m of another
+    building), so a non-uniform weight -- e.g. (1.0, 1.0, 2.0) --
+    may help the model actually learn borders. We keep the default
+    uniform here and expose it as a config knob rather than guessing.
+    """
+    weight = None
+    if class_weights is not None:
+        weight = torch.tensor(class_weights, dtype=logits.dtype, device=logits.device)
+    return nn.functional.cross_entropy(logits, target, weight=weight)
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +391,43 @@ __all__ = [
     "TrainResult",
     "bce_dice_loss",
     "build_albunet_from_checkpoint",
+    "cross_entropy_3class_loss",
+    "rebuild_final_conv_for_three_class",
     "seed_everything",
     "train_one_run",
 ]
+
+
+def rebuild_final_conv_for_three_class(model: Any,
+                                       num_classes: int = 3) -> Any:
+    """Replace Albunet's 1-channel final conv with a `num_classes`-
+    channel one, re-using the first `in_channels` weights for warm
+    start.
+
+    Rationale: the upstream `neat-fullxview-epoch75` checkpoint has
+    `shape_out = (1, 512, 512)` and a 1-channel `self.final`. Phase 2a
+    needs 3 outputs. We rebuild the layer with the same input width
+    (num_filters = 32 by default), copy the pretrained weight for
+    channel 0 into channel 1 (interior) because interior ~= the
+    original binary building class, and leave channels 0 (bg) and 2
+    (border) at Kaiming init. This gives the model a running start
+    rather than training the whole softmax head from scratch.
+    """
+    final = getattr(model, "final", None)
+    if final is None or not isinstance(final, nn.Conv2d):
+        raise AttributeError("model has no Conv2d `.final`; is this an Albunet?")
+    in_channels = final.in_channels
+    old_weight = final.weight.detach().clone()
+    old_bias = final.bias.detach().clone() if final.bias is not None else None
+
+    new_final = nn.Conv2d(in_channels, num_classes, kernel_size=1,
+                          bias=final.bias is not None)
+    nn.init.kaiming_normal_(new_final.weight, mode="fan_out", nonlinearity="relu")
+    with torch.no_grad():
+        # Interior channel inherits the pretrained "is building" filter.
+        new_final.weight[1] = old_weight[0]
+        if old_bias is not None and new_final.bias is not None:
+            new_final.bias.zero_()
+            new_final.bias[1] = old_bias[0]
+    model.final = new_final
+    return model

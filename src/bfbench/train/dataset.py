@@ -33,6 +33,7 @@ from rasterio.transform import from_bounds as _from_bounds
 from shapely.geometry import box
 
 from bfbench.data.adapter import WEBMERCATOR_EPSG, tile_bounds_webmercator
+from bfbench.data.three_class import ThreeClassConfig, rasterise_three_class
 
 try:
     import torch
@@ -112,8 +113,17 @@ def _read_image(path: Path) -> np.ndarray:
 class BuildingTileDataset(Dataset):
     """Torch Dataset for building-segmentation fine-tuning.
 
-    Each item is (image (3,H,W) float32 in [0,1], mask (1,H,W) float32
-    in {0,1}).
+    Each item is `(image, target)` where:
+
+      * `image` is `(3, H, W) float32` in `[0, 1]`.
+      * `target` depends on `target_mode`:
+          - `"binary"` (default, Phase 1): `(1, H, W) float32`
+            in `{0, 1}`.
+          - `"3class"` (Phase 2a): `(H, W) int64` in `{0, 1, 2}`
+            matching `bfbench.data.three_class.{CLS_BG,
+            CLS_INTERIOR, CLS_BORDER}`. Shape is 2-D because
+            `torch.nn.CrossEntropyLoss` wants class indices without
+            a leading singleton channel.
 
     Parameters
     ----------
@@ -133,6 +143,11 @@ class BuildingTileDataset(Dataset):
     extension
         File extension for image reads. Defaults to ".png"; GeoTIFF
         works too for tests.
+    target_mode
+        `"binary"` (Phase 1) or `"3class"` (Phase 2a).
+    three_class_cfg
+        Only consulted when `target_mode == "3class"`. Default is the
+        3 m touching-pair border rule; see docs/phase2-decisions.md.
     """
 
     def __init__(self,
@@ -142,17 +157,25 @@ class BuildingTileDataset(Dataset):
                  *,
                  channel_name: str = "images",
                  tile_size: int = 512,
-                 extension: str = ".png") -> None:
+                 extension: str = ".png",
+                 target_mode: str = "binary",
+                 three_class_cfg: ThreeClassConfig | None = None) -> None:
         if not _HAS_TORCH:  # pragma: no cover - trivial guard
             raise ImportError(
                 "BuildingTileDataset requires torch. Install torch==2.11.0 "
                 "(see environment.yml) to use the training entry points."
+            )
+        if target_mode not in ("binary", "3class"):
+            raise ValueError(
+                f"target_mode must be 'binary' or '3class', got {target_mode!r}"
             )
         self._tiles = list(tiles)
         self._tiles_root = Path(tiles_root)
         self._channel = channel_name
         self._tile_size = int(tile_size)
         self._extension = extension
+        self._target_mode = target_mode
+        self._three_class_cfg = three_class_cfg or ThreeClassConfig()
         self._ref_mercator = _ref_in_mercator(reference_gdf)
         # Pre-resolve the image paths; fail fast if any tile is missing.
         self._samples: list[TileSample] = []
@@ -167,17 +190,29 @@ class BuildingTileDataset(Dataset):
                 )
             self._samples.append(TileSample(tile=t, image_path=p))
 
+    @property
+    def target_mode(self) -> str:
+        return self._target_mode
+
     def __len__(self) -> int:
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         s = self._samples[idx]
         img_np = _read_image(s.image_path)                 # (3, H, W)
-        mask_np = rasterise_reference_to_tile(
-            self._ref_mercator, s.tile, self._tile_size,
-        ).astype(np.float32)                               # (H, W)
         img = torch.from_numpy(img_np)
-        mask = torch.from_numpy(mask_np).unsqueeze(0)      # (1, H, W)
+        if self._target_mode == "binary":
+            mask_np = rasterise_reference_to_tile(
+                self._ref_mercator, s.tile, self._tile_size,
+            ).astype(np.float32)                           # (H, W)
+            mask = torch.from_numpy(mask_np).unsqueeze(0)  # (1, H, W)
+            return img, mask
+        # 3class: integer class indices, no leading channel
+        mask_np = rasterise_three_class(
+            self._ref_mercator, s.tile, self._tile_size,
+            cfg=self._three_class_cfg,
+        ).astype(np.int64)                                 # (H, W)
+        mask = torch.from_numpy(mask_np)                   # (H, W) int64
         return img, mask
 
 

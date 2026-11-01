@@ -1,0 +1,74 @@
+# Phase 2a config for AOI_2_Vegas: three-class training (background /
+# interior / border contact) to help the model separate touching
+# buildings. Only the `train` section differs from the Phase 1 config.
+# See docs/phase2-decisions.md for the border-definition rationale.
+
+aoi:
+  name: AOI_2_Vegas
+  provider: spacenet2
+  aoi_id: 2
+  split: train
+  image_kind: PS-RGB
+  chip_limit: null
+  chip_ids_source: runs/vegas_prepare/chip_selection.json
+
+adapter:
+  target_gsd_m: 0.5
+  tile_size: 512
+  zoom_tolerance: 0.20
+  keep_borders: true
+  channel_name: images
+
+reference:
+  dedup:
+    method: touching_union
+    buffer_m: 0.5
+    iou_threshold: 0.5
+    equal_area_epsg: 6933
+
+sampling:
+  n_tiles: 400
+  seed: 20260911
+  min_valid_fraction: 1.0
+
+split:
+  block_size_m: 1000.0
+  ratios: [0.70, 0.15, 0.15]
+  seed: 20260911
+
+train:
+  source_weight: weights/neat-fullxview-epoch75.pth
+  output_dir: runs/vegas_prepare/train_phase2a
+  batch_size: 4
+  epochs: 30
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  amp: true
+  patience: 5
+  num_workers: 2
+  seed: 20260911
+  pooled_aois: []
+  pooled_aois_work_dirs: []
+  # Phase 2a-specific:
+  target_mode: 3class
+  border_distance_m: 3.0
+
+abd:
+  config: external/abd/input/config.toml
+  # Fine-tuned 3-class checkpoint for eval:
+  checkpoint: runs/vegas_prepare/train_phase2a/best.pth
+  vectorize_type: Building
+  metatiles: true
+
+run:
+  work_dir: runs/vegas_prepare
+
+# Phase 2a inference needs the 3-class -> binary interior postprocess
+# before `abd vectorize` runs. `bfbench run-prepared` reads this
+# section (if present) and inserts the step.
+postprocess:
+  method: argmax_interior
+
+eval:
+  iou_threshold: 0.5
+  pixel_resolution_m: 0.5
