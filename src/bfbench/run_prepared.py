@@ -69,6 +69,16 @@ class PreparedRunConfig:
     checkpoint: Path
     vectorize_type: str
     metatiles: bool
+    # Phase 2 postprocess intent. None means "treat the model output as
+    # a binary mask and vectorise directly" (Phase 1 behaviour). Values:
+    #   "argmax_interior"  Phase 2a: 3-class checkpoint -> carve class 1
+    #                      out of the per-tile PNGs before vectorising.
+    #   "watershed"        Phase 2b: binary mask -> split touching
+    #                      components via scripts/watershed_vectorize.py
+    #                      instead of `abd vectorize`.
+    postprocess_method: str | None = None
+    postprocess_min_marker_distance_m: float = 5.0
+    postprocess_prob_threshold: float = 0.5
 
 
 def _load(cfg_path: Path) -> PreparedRunConfig:
@@ -76,6 +86,14 @@ def _load(cfg_path: Path) -> PreparedRunConfig:
     ad = y["adapter"]
     abd = y["abd"]
     run = y["run"]
+    pp = y.get("postprocess") or {}
+    pp_method = pp.get("method")
+    if pp_method is not None and pp_method not in ("argmax_interior", "watershed"):
+        raise ValueError(
+            f"postprocess.method must be one of "
+            f"{{'argmax_interior', 'watershed'}} or absent; "
+            f"got {pp_method!r}"
+        )
     return PreparedRunConfig(
         aoi_name=y["aoi"]["name"],
         work_dir=Path(run["work_dir"]),
@@ -88,7 +106,85 @@ def _load(cfg_path: Path) -> PreparedRunConfig:
         checkpoint=Path(abd["checkpoint"]).expanduser(),
         vectorize_type=str(abd.get("vectorize_type", "Building")),
         metatiles=bool(abd.get("metatiles", True)),
+        postprocess_method=pp_method,
+        postprocess_min_marker_distance_m=float(
+            pp.get("min_marker_distance_m", 5.0)
+        ),
+        postprocess_prob_threshold=float(pp.get("prob_threshold", 0.5)),
     )
+
+
+def _read_checkpoint_shape_out(checkpoint: Path) -> tuple[int, int, int] | None:
+    """Peek at the checkpoint's `shape_out` without loading the weights.
+
+    Returns `(C, H, W)` on success; `None` if the file can't be opened.
+    Uses `torch.load(weights_only=False)` because the upstream checkpoint
+    carries a `uuid.UUID` that torch 2.6+'s "safe" unpickler refuses.
+    The checkpoint is already SHA-256 pinned via `fetch_weights.py` /
+    `training_manifest.json`, so loading it is safe.
+    """
+    try:
+        import torch  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        chkpt = torch.load(str(checkpoint), map_location="cpu",
+                           weights_only=False)
+    except Exception:  # noqa: BLE001 - fallback, error is surfaced by caller
+        return None
+    so = chkpt.get("shape_out")
+    if so is None:
+        return None
+    return int(so[0]), int(so[1]), int(so[2])
+
+
+def _validate_checkpoint_vs_postprocess(cfg: PreparedRunConfig) -> None:
+    """Fail loudly before predict runs if the checkpoint + postprocess
+    pairing would produce silent garbage.
+
+    Specifically:
+      - A 3-class checkpoint (shape_out[0] == 3) MUST have
+        `postprocess.method: argmax_interior`. Without it, the raw
+        {0, 1, 2} PNGs would be fed into `abd vectorize` as if they
+        were binary, and `rasterio.features.shapes` would polygonise
+        label 2 (the touching-pair border) as a thin ring on every
+        building. The result would look superficially plausible but
+        be nonsense; this check prevents that.
+      - A binary checkpoint (shape_out[0] == 1) MUST NOT have
+        `postprocess.method: argmax_interior`. The transform would
+        no-op at best or lose data at worst.
+      - `postprocess.method: watershed` is permitted on either; it
+        operates on the binary foreground mask either way.
+    """
+    shape_out = _read_checkpoint_shape_out(cfg.checkpoint)
+    if shape_out is None:
+        _LOG.warning(
+            "could not peek shape_out from checkpoint %s; "
+            "skipping checkpoint vs postprocess validation",
+            cfg.checkpoint,
+        )
+        return
+    n_classes = shape_out[0]
+    pp = cfg.postprocess_method
+    if n_classes == 3 and pp != "argmax_interior":
+        raise RuntimeError(
+            f"checkpoint {cfg.checkpoint} declares shape_out={shape_out} "
+            f"(3-class, Phase 2a) but postprocess.method is {pp!r}. "
+            "A 3-class model's per-tile PNGs carry values in {0, 1, 2}; "
+            "`abd vectorize` would polygonise class 2 (touching-pair "
+            "border) as a thin ring on every building, producing silent "
+            "garbage. Set `postprocess.method: argmax_interior` in the "
+            "YAML to route the output through the 3-class -> binary "
+            "extractor before vectorisation."
+        )
+    if n_classes == 1 and pp == "argmax_interior":
+        raise RuntimeError(
+            f"checkpoint {cfg.checkpoint} declares shape_out={shape_out} "
+            "(binary) but postprocess.method is 'argmax_interior'. "
+            "That transform is only valid for a 3-class model; either "
+            "drop the postprocess section (binary path) or switch to a "
+            "3-class checkpoint."
+        )
 
 
 def _read_tile_from_mosaic(vrt_path: Path,
@@ -245,7 +341,37 @@ def _run(argv: list[str]) -> None:
         raise RuntimeError(f"command failed (exit={r.returncode}): {' '.join(str(a) for a in argv)}")
 
 
+def _carve_interior_masks(src_dir: Path, dst_dir: Path) -> int:
+    """Phase 2a transform step: read every <z>/<x>/<y>.png in `src_dir`
+    and write a sibling PNG under `dst_dir` where only pixels == 1
+    (interior) remain non-zero. Border pixels (== 2) become 0, which
+    carves gaps between touching buildings in the vectorised output.
+
+    Idempotent; skips a destination tile that already exists.
+    """
+    from bfbench.postprocess.three_class import argmax_interior  # noqa: PLC0415
+    count = 0
+    for png in src_dir.rglob("*.png"):
+        rel = png.relative_to(src_dir)
+        dst = dst_dir / rel
+        if dst.is_file():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(png) as src:
+            mask = src.read(1)
+        binary = argmax_interior(mask)
+        # Preserve the original upstream file format (indexed PNG with
+        # a single band). PIL's "L" mode is enough for abd vectorize.
+        Image.fromarray((binary * 255).astype(np.uint8), mode="L").save(
+            dst, format="PNG", optimize=False,
+        )
+        count += 1
+    return count
+
+
 def predict_vectorize_filter(cfg: PreparedRunConfig, tiles_root: Path) -> Path:
+    _validate_checkpoint_vs_postprocess(cfg)
+
     cover = tiles_root / "cover.csv"
     masks_dir = cfg.work_dir / "masks"
     masks_dir.mkdir(parents=True, exist_ok=True)
@@ -265,12 +391,33 @@ def predict_vectorize_filter(cfg: PreparedRunConfig, tiles_root: Path) -> Path:
             argv.append("--keep_borders")
     _run(argv)
 
-    raw_geojson = cfg.work_dir / "predicted_raw.geojson"
-    _run(["abd", "vectorize",
-          "--masks", str(masks_dir),
-          "--type", cfg.vectorize_type,
-          "--config", str(cfg.abd_config),
-          "--out", str(raw_geojson)])
+    # Phase 2a: carve class 1 out of the 3-class raster BEFORE vectorising.
+    vectorise_masks_dir = masks_dir
+    if cfg.postprocess_method == "argmax_interior":
+        interior_dir = cfg.work_dir / "masks_interior"
+        interior_dir.mkdir(parents=True, exist_ok=True)
+        n = _carve_interior_masks(masks_dir, interior_dir)
+        _LOG.info("argmax_interior: wrote %d binary interior tiles to %s",
+                 n, interior_dir)
+        vectorise_masks_dir = interior_dir
+
+    # Phase 2b: use watershed_vectorize.py in place of `abd vectorize`.
+    if cfg.postprocess_method == "watershed":
+        from bfbench.postprocess.watershed import WatershedConfig  # noqa: PLC0415
+        watershed_cfg = WatershedConfig(
+            min_marker_distance_m=cfg.postprocess_min_marker_distance_m,
+            prob_threshold=cfg.postprocess_prob_threshold,
+        )
+        raw_geojson = cfg.work_dir / "predicted_raw.geojson"
+        from scripts import watershed_vectorize  # noqa: PLC0415
+        watershed_vectorize.vectorize(masks_dir, raw_geojson, cfg=watershed_cfg)
+    else:
+        raw_geojson = cfg.work_dir / "predicted_raw.geojson"
+        _run(["abd", "vectorize",
+              "--masks", str(vectorise_masks_dir),
+              "--type", cfg.vectorize_type,
+              "--config", str(cfg.abd_config),
+              "--out", str(raw_geojson)])
 
     final = cfg.work_dir / "predicted.geojson"
     _run(["filter-buildings",

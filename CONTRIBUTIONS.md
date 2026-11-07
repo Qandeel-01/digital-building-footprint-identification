@@ -90,6 +90,8 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `scripts/baseline_ci_table.py`                 | Produce the README baseline table with 95% bootstrap CIs (P/R/F1 + merge + pixel_IoU + Chamfer). |
 | `scripts/watershed_vectorize.py`               | Phase 2b: standalone drop-in for `abd vectorize` with watershed instance separation.           |
 | `scripts/merge_rate_overlay.py`                | Phase 2: 4-series overlay (baseline / Phase 1 / 2a / 2b) of merge rate vs local density.      |
+| `scripts/watershed_loao_sweep.py`              | Phase 2b: leave-one-AOI-out sweep over min_marker_distance_m with micro-F1 bootstrap CIs.    |
+| `scripts/kaggle_khartoum_runbook.md`           | Deduplicated Kaggle runbook for Phase 1 + Phase 2a on Khartoum; expected split sizes + CI usability note. |
 | `scripts/kaggle_phase1.py`                     | Phase 1: GPU runbook orchestrator (prepare -> adapt -> train -> eval -> baseline rescore).   |
 | `scripts/apply_upstream_patches.py`            | Idempotent applier for `patches/abd/*.patch` on top of the submodule SHA.                    |
 | `scripts/predict_local.py`                     | Single-GPU predict shim (uses upstream Albunet/SemSeg unchanged; skips DDP/NCCL).            |
@@ -127,6 +129,7 @@ Everything else in the tree is authored by Qandeel Fatima, MIT-licensed.
 | `tests/test_three_class.py`                    | Phase 2a: touching-pair border mask invariants (isolated / pair / three-in-a-row).            |
 | `tests/test_watershed.py`                      | Phase 2b: isolated-blob -> 1 label; touching discs -> 2 labels; gap-insertion + config.      |
 | `tests/test_three_class_training.py`           | Phase 2a: dataset shape in 3class mode, CE loss, loop writes `shape_out=(3,...)` checkpoint. |
+| `tests/test_run_prepared_postprocess_validation.py` | Phase 2a: run_prepared refuses silent-garbage checkpoint/postprocess mismatches.          |
 
 Everything under `runs/`, `weights/`, `data/`, `output/` is gitignored
 and produced by running the pipeline; it is not committed.
