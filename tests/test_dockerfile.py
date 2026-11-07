@@ -9,8 +9,11 @@ preserve so the image stays reproducible:
 - upstream patches are applied BEFORE abd_model / abd_utils are installed
   (otherwise the editable install picks up unpatched source),
 - the image runs as a non-root user,
-- external/abd/.git is NOT excluded from the build context (the patch
-  applier shells out to `git -C external/abd apply`).
+- external/abd/.git is NOT excluded from the build context -- not
+  because the applier *needs* it inside the image (it falls back to
+  `patch(1)` when the submodule gitlink dangles) but because
+  excluding it would mangle the dev checkout's `patches/` lookup.
+- the Dockerfile installs `patch(1)` so the fallback path works.
 """
 
 from __future__ import annotations
@@ -103,6 +106,20 @@ def test_abd_installed_before_bfbench(dockerfile_text: str) -> None:
 # downloads and parquet writes land on bind mounts and would otherwise be
 # owned by root on the host.
 # ---------------------------------------------------------------------------
+
+def test_dockerfile_installs_patch_utility(dockerfile_text: str) -> None:
+    """apply_upstream_patches.py falls back to `patch -p1` when the
+    submodule gitlink dangles (= the normal state inside this image).
+    The Dockerfile MUST install `patch` or that fallback will fail at
+    runtime with 'patch: command not found'."""
+    # Look for ' patch \' or ' patch\n' as an apt-get argument.
+    import re  # noqa: PLC0415
+    m = re.search(r"apt-get install [^|]*?\bpatch\b", dockerfile_text, re.DOTALL)
+    assert m, (
+        "Dockerfile does not install the `patch` utility; "
+        "apply_upstream_patches.py's patch(1) fallback will fail"
+    )
+
 
 def test_image_runs_as_non_root(dockerfile_text: str) -> None:
     user_lines = [

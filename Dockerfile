@@ -30,15 +30,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ENV_NAME=bfbench
 
 # ---------------------------------------------------------------------------
-# OS deps: curl + ca-certs for miniforge; git for the patch applier (uses
-# `git apply`); build-essential kept out intentionally -- conda-forge supplies
-# every compiled lib we need (gdal, rasterio) as prebuilt binaries.
+# OS deps: curl + ca-certs for miniforge; git for the patch applier's git-
+# apply backend; patch(1) for the fallback backend used when external/abd/
+# is a dangling submodule gitlink (expected inside this image, since Docker
+# COPY doesn't carry the parent repo's .git/modules/). build-essential kept
+# out intentionally -- conda-forge supplies every compiled lib we need
+# (gdal, rasterio) as prebuilt binaries.
 # ---------------------------------------------------------------------------
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         git \
+        patch \
         bzip2 \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
@@ -71,12 +75,14 @@ SHELL ["/bin/bash", "-lc"]
 # ---------------------------------------------------------------------------
 # Copy the upstream submodule and apply our patches on top of its pinned
 # SHA. Done BEFORE installing abd_model / abd_utils so the editable installs
-# see the patched source. The applier is idempotent and uses `git apply`,
-# which is why external/abd/.git is kept in the context (see .dockerignore).
+# see the patched source. The applier auto-detects whether external/abd/ is
+# a usable git repo (dev checkout) or a dangling submodule gitlink (this
+# Docker image, since COPY doesn't carry the parent repo's .git/modules/)
+# and falls back to `patch -p1` in the second case. Both backends produce
+# identical working-tree state. See scripts/apply_upstream_patches.py.
 #
-# `safe.directory '*'` guards against the "dubious ownership" check that
-# newer git raises when the submodule was mounted/copied from a different
-# uid than the current user.
+# `safe.directory '*'` is harmless when the fallback runs; it only matters
+# in the dev-checkout path.
 # ---------------------------------------------------------------------------
 COPY patches/ /workspace/patches/
 COPY scripts/apply_upstream_patches.py /workspace/scripts/apply_upstream_patches.py
