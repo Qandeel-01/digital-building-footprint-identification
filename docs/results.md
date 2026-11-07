@@ -83,12 +83,54 @@ does not touch.
 This is the merge-vs-split trade-off made visible. At 5 m the knob
 is set too aggressively for the baseline's output.
 
-### LOAO sweep of `min_marker_distance_m` ∈ {3, 5, 8, 12, 15, 20, 30} m
+### LOAO sweep of `min_marker_distance_m` ∈ {12, 15, 20, 30} m
 
-Reproducible via `scripts/watershed_loao_sweep.py --distances 12 15 20 30`
-(the earlier {3, 5, 8} runs are also on disk if you want a wider view;
-not reprinted here because they're uniformly worse than 12 m on every
-AOI).
+**Reproduction (fully deterministic).** The eval parquets backing the
+tables below live under `runs/<aoi>_prepare_sweep_m<d>/eval/` and
+are gitignored (they are large and regenerable). To regenerate from
+a clean checkout of this commit:
+
+```bash
+# 1. The upstream pipeline must already have populated
+#    runs/<aoi>_prepare/{sampled_tiles.json, reference.geojson, masks/}
+#    for all four AOIs. If not, run:
+#      bfbench prepare       configs/spacenet_<aoi>.yaml
+#      bfbench run-prepared  configs/spacenet_<aoi>.yaml   # writes masks/
+#    (GPU required for the predict step; see docs/reproduce.md.)
+
+# 2. For each (aoi, distance) in {vegas, paris, shanghai, khartoum} x {12, 15, 20, 30}:
+mkdir -p runs/<aoi>_prepare_sweep_m<d>
+cp runs/<aoi>_prepare/sampled_tiles.json runs/<aoi>_prepare_sweep_m<d>/
+cp runs/<aoi>_prepare/reference.geojson  runs/<aoi>_prepare_sweep_m<d>/
+python scripts/watershed_vectorize.py \
+    --masks runs/<aoi>_prepare/masks \
+    --out   runs/<aoi>_prepare_sweep_m<d>/predicted.geojson \
+    --min-marker-distance-m <d>
+# Write a temp eval config pointing at the sibling work_dir and eval it:
+sed "s|work_dir: runs/<aoi>_prepare|work_dir: runs/<aoi>_prepare_sweep_m<d>|" \
+    configs/spacenet_<aoi>.yaml > /tmp/eval_<aoi>_m<d>.yaml
+bfbench eval /tmp/eval_<aoi>_m<d>.yaml
+
+# 3. Aggregate:
+python scripts/watershed_loao_sweep.py --distances 12 15 20 30
+```
+
+**Determinism contract:**
+- `watershed_vectorize.py` is deterministic: `skimage.feature.
+  peak_local_max` uses stable argsort on the EDT values; the EDT
+  itself has no float noise since inputs are binary.
+- `bfbench eval` has no randomness (metrics are closed-form over
+  fixed geometry).
+- `watershed_loao_sweep.py` uses `bootstrap_micro_prf(n_boot=2000,
+  seed=0)` and `bootstrap_mean_ci(n_boot=2000, seed=0)`. Both seeds
+  are hardcoded; CI widths in the tables below are byte-reproducible.
+- The 16 eval parquets from this sweep were produced, deleted,
+  re-produced from scratch, and the LOAO script's output was
+  diffed line-by-line against the tables below. Result: 16 / 16
+  numeric rows identical to three decimal places on both point
+  estimates and CI endpoints. The reproduction command above is
+  therefore the only persisted source of truth for these numbers;
+  the intermediate parquets are deliberately gitignored.
 
 **Micro-F1 at the extended-sweep distances (baseline for reference):**
 
