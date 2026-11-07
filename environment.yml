@@ -33,6 +33,10 @@ dependencies:
   - pillow=11.1.0
   - matplotlib-base=3.10.0
   - opencv=4.10.0
+  # Phase 2b watershed instance separation: peak_local_max +
+  # segmentation.watershed. Pinned to 0.24.x because 0.25+ moved
+  # peak_local_max's signature.
+  - scikit-image=0.24.0
 
   # Upstream imports these at package import time (abd_model.tiles
   # unconditionally `import psycopg2`), so they must be installed even

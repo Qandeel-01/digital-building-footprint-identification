@@ -48,6 +48,7 @@ jobs:
             'botocore=1.35.99' \
             'tqdm=4.67.1' \
             'typer=0.15.1' \
+            'scikit-image=0.24.0' \
             'pytest=8.3.4' \
             'ruff=0.9.1'
           pip install 'mercantile==1.1.5'
