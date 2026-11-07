@@ -124,6 +124,103 @@ def test_zero_shared_tiles_raises(compare_module, tmp_path: Path) -> None:
         )
 
 
+def _mk_config(path: Path, work_dir: Path, aoi: str,
+              output_subdir: str | None,
+              with_split: bool) -> Path:
+    """Minimal Phase 1 / Phase 2a config stub for resolve_from_config."""
+    import yaml  # noqa: PLC0415
+    cfg = {
+        "aoi": {"name": aoi, "aoi_id": 2, "split": "train",
+                "image_kind": "PS-RGB"},
+        "adapter": {"target_gsd_m": 0.5, "tile_size": 512,
+                   "channel_name": "images"},
+        "run": {"work_dir": str(work_dir)},
+    }
+    if with_split:
+        cfg["split"] = {"block_size_m": 1000.0, "ratios": [0.7, 0.15, 0.15],
+                       "seed": 0}
+    if output_subdir is not None:
+        cfg["eval"] = {"output_subdir": output_subdir}
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# --config resolution (Phase 1 default + Phase 2a eval_phase2a override)
+# ---------------------------------------------------------------------------
+
+def test_resolve_phase1_config_uses_default_eval_subdir(compare_module, tmp_path: Path) -> None:
+    """Phase 1 config (no eval.output_subdir) -> parquet paths resolve
+    to <work_dir>/eval/ and <work_dir>/baseline_rescored/eval/."""
+    work_dir = tmp_path / "vegas_prepare"
+    cfg = _mk_config(tmp_path / "phase1.yaml", work_dir, "AOI_2_Vegas",
+                    output_subdir=None, with_split=True)
+    resolved = compare_module.resolve_from_config(cfg)
+    assert resolved["aoi"] == "AOI_2_Vegas"
+    assert resolved["finetuned_parquet"] == work_dir / "eval" / "results.parquet"
+    assert resolved["baseline_parquet"] == \
+        work_dir / "baseline_rescored" / "eval" / "results.parquet"
+    assert resolved["out_dir"] == work_dir / "eval"
+
+
+def test_resolve_phase2a_config_uses_eval_phase2a_subdir(compare_module, tmp_path: Path) -> None:
+    """Phase 2a config (eval.output_subdir: eval_phase2a) -> parquet
+    paths resolve under <work_dir>/eval_phase2a/."""
+    work_dir = tmp_path / "vegas_prepare"
+    cfg = _mk_config(tmp_path / "phase2a.yaml", work_dir, "AOI_2_Vegas",
+                    output_subdir="eval_phase2a", with_split=True)
+    resolved = compare_module.resolve_from_config(cfg)
+    assert resolved["finetuned_parquet"] == \
+        work_dir / "eval_phase2a" / "results.parquet"
+    assert resolved["baseline_parquet"] == \
+        work_dir / "baseline_rescored" / "eval_phase2a" / "results.parquet"
+    assert resolved["out_dir"] == work_dir / "eval_phase2a"
+
+
+def test_resolve_rejects_config_without_split(compare_module, tmp_path: Path) -> None:
+    """A Phase 2/3 benchmark config has no `split:` section, so there
+    are no held-out tiles to compare. Must raise with a clear message."""
+    work_dir = tmp_path / "vegas_prepare"
+    cfg = _mk_config(tmp_path / "benchmark.yaml", work_dir, "AOI_2_Vegas",
+                    output_subdir=None, with_split=False)
+    with pytest.raises(ValueError, match="split"):
+        compare_module.resolve_from_config(cfg)
+
+
+def test_resolve_missing_config_file(compare_module, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        compare_module.resolve_from_config(tmp_path / "nonexistent.yaml")
+
+
+def test_resolve_then_compare_end_to_end(compare_module, tmp_path: Path) -> None:
+    """Round-trip: resolve_from_config -> compare -> markdown/JSON in
+    the right place. Uses Phase 2a (non-default subdir) to exercise
+    the full path-derivation."""
+    work_dir = tmp_path / "vegas_prepare"
+    phase2a_cfg = _mk_config(tmp_path / "phase2a.yaml", work_dir,
+                             "AOI_2_Vegas",
+                             output_subdir="eval_phase2a", with_split=True)
+    resolved = compare_module.resolve_from_config(phase2a_cfg)
+    # Create fake parquets at the paths the resolver predicted.
+    tiles = [(17, i, i) for i in range(5)]
+    resolved["finetuned_parquet"].parent.mkdir(parents=True, exist_ok=True)
+    resolved["baseline_parquet"].parent.mkdir(parents=True, exist_ok=True)
+    _mk_full_parquet(resolved["baseline_parquet"],
+                     prec=0.5, rec=0.5, f1=0.5, merge=0.1, split=0.0,
+                     pixel_iou=0.5, chamfer=2.0, tiles=tiles)
+    _mk_full_parquet(resolved["finetuned_parquet"],
+                     prec=0.8, rec=0.8, f1=0.8, merge=0.05, split=0.0,
+                     pixel_iou=0.7, chamfer=1.0, tiles=tiles)
+    compare_module.compare(
+        resolved["baseline_parquet"], resolved["finetuned_parquet"],
+        aoi_name=resolved["aoi"], out_dir=resolved["out_dir"],
+        n_boot=10, seed=0,
+    )
+    # Output must land inside the Phase 2a eval dir, not Phase 1's.
+    assert (resolved["out_dir"] / "comparison_AOI_2_Vegas.md").is_file()
+    assert (resolved["out_dir"] / "comparison_AOI_2_Vegas.json").is_file()
+
+
 def test_json_schema(compare_module, tmp_path: Path) -> None:
     tiles = [(17, i, i) for i in range(5)]
     _mk_full_parquet(tmp_path / "b.parquet",

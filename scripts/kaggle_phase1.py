@@ -79,33 +79,42 @@ def evaluate_finetuned(cfg_path: Path) -> None:
     _sh(["bfbench", "eval", str(cfg_path.resolve())])
 
 
-def _baseline_eval_cfg_path(phase1_cfg_path: Path) -> Path:
-    """Emit a sibling config that reuses the Phase 1 work_dir but
-    points `abd.checkpoint` at the ORIGINAL baseline weight. This is
-    how we score the baseline on the Phase 1 test tiles without
-    touching the Phase 1 artifacts.
+def _baseline_eval_cfg_path(cfg_path: Path) -> Path:
+    """Emit a sibling config that reuses the Phase 1 / Phase 2a
+    work_dir but points `abd.checkpoint` at the ORIGINAL baseline
+    weight. This is how we score the baseline on the HELD-OUT test
+    tiles without touching the fine-tuned artifacts.
+
+    Also strips any `postprocess:` section: the baseline is binary and
+    `argmax_interior` would raise `_validate_checkpoint_vs_postprocess`.
     """
-    y = yaml.safe_load(phase1_cfg_path.read_text(encoding="utf-8"))
+    y = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     y["abd"]["checkpoint"] = str(BASELINE_WEIGHT.relative_to(REPO_ROOT))
     y["run"]["work_dir"] = str(Path(y["run"]["work_dir"]) / "baseline_rescored")
-    out = phase1_cfg_path.with_name(phase1_cfg_path.stem + "_baseline.yaml")
+    # Baseline is always binary; drop any Phase 2a/2b postprocess intent.
+    y.pop("postprocess", None)
+    out = cfg_path.with_name(cfg_path.stem + "_baseline.yaml")
     out.write_text(yaml.safe_dump(y, sort_keys=False), encoding="utf-8")
     return out
 
 
-def evaluate_baseline_on_phase1_tiles(phase1_cfg_path: Path) -> Path:
-    """Score the UNMODIFIED baseline checkpoint on the Phase 1 test
-    tiles. Writes the eval parquet to <work_dir>/baseline_rescored/eval/results.parquet.
+def evaluate_baseline_on_phase1_tiles(cfg_path: Path) -> Path:
+    """Score the UNMODIFIED baseline checkpoint on the Phase 1 / 2a
+    held-out test tiles. Writes the eval parquet into
+    `<work_dir>/baseline_rescored/<eval.output_subdir or "eval">/
+    results.parquet` -- matching the path
+    `compare_baseline_vs_finetuned.resolve_from_config` expects.
 
     Depends on `bfbench prepare` having been run for this AOI already
     (so sampled_tiles.json and block_split.json exist).
     """
-    cfg_src = phase1_cfg_path.resolve()
+    cfg_src = cfg_path.resolve()
     cfg_tgt = _baseline_eval_cfg_path(cfg_src)
-    # The baseline config shares the mosaic / reference / sampled tiles
-    # with the Phase 1 run. Symlink/copy them so prepare can be skipped.
-    src_dir = Path(yaml.safe_load(cfg_src.read_text(encoding="utf-8"))["run"]["work_dir"])
-    dst_dir = Path(yaml.safe_load(cfg_tgt.read_text(encoding="utf-8"))["run"]["work_dir"])
+    y_src = yaml.safe_load(cfg_src.read_text(encoding="utf-8"))
+    y_tgt = yaml.safe_load(cfg_tgt.read_text(encoding="utf-8"))
+    src_dir = Path(y_src["run"]["work_dir"])
+    dst_dir = Path(y_tgt["run"]["work_dir"])
+    eval_subdir = str((y_src.get("eval") or {}).get("output_subdir", "eval"))
     dst_dir.mkdir(parents=True, exist_ok=True)
     for name in ("sampled_tiles.json", "reference.geojson", "mosaic.vrt",
                 "block_split.json"):
@@ -113,22 +122,16 @@ def evaluate_baseline_on_phase1_tiles(phase1_cfg_path: Path) -> Path:
             shutil.copy2(src_dir / name, dst_dir / name)
     _sh(["bfbench", "run-prepared", str(cfg_tgt)])
     _sh(["bfbench", "eval", str(cfg_tgt)])
-    return dst_dir / "eval" / "results.parquet"
+    return dst_dir / eval_subdir / "results.parquet"
 
 
-def build_comparison(phase1_cfg_path: Path) -> None:
-    """Produce `comparison_<AOI>.{json,md}` next to the Phase 1 eval."""
-    cfg = yaml.safe_load(phase1_cfg_path.read_text(encoding="utf-8"))
-    aoi_name = cfg["aoi"]["name"]
-    work_dir = Path(cfg["run"]["work_dir"])
-    finetuned_parquet = work_dir / "eval" / "results.parquet"
-    baseline_parquet = work_dir / "baseline_rescored" / "eval" / "results.parquet"
-    out_dir = work_dir / "eval"
+def build_comparison(cfg_path: Path) -> None:
+    """Produce `comparison_<AOI>.{json,md}` next to the fine-tuned
+    eval parquet. Works for Phase 1 and Phase 2a configs; paths are
+    resolved by `compare_baseline_vs_finetuned.resolve_from_config`.
+    """
     _sh([sys.executable, "scripts/compare_baseline_vs_finetuned.py",
-         "--baseline",  str(baseline_parquet),
-         "--finetuned", str(finetuned_parquet),
-         "--aoi",       aoi_name,
-         "--out-dir",   str(out_dir)])
+         "--config", str(cfg_path.resolve())])
 
 
 def main() -> int:

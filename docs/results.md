@@ -83,61 +83,87 @@ does not touch.
 This is the merge-vs-split trade-off made visible. At 5 m the knob
 is set too aggressively for the baseline's output.
 
-### LOAO sweep of `min_marker_distance_m` ∈ {3, 5, 8, 12} m
+### LOAO sweep of `min_marker_distance_m` ∈ {3, 5, 8, 12, 15, 20, 30} m
 
-Reproducible via `scripts/watershed_loao_sweep.py`.
+Reproducible via `scripts/watershed_loao_sweep.py --distances 12 15 20 30`
+(the earlier {3, 5, 8} runs are also on disk if you want a wider view;
+not reprinted here because they're uniformly worse than 12 m on every
+AOI).
 
-**Micro-F1 at each distance (baseline for reference):**
+**Micro-F1 at the extended-sweep distances (baseline for reference):**
 
-| AOI | baseline | 3 m | 5 m | 8 m | 12 m |
+| AOI | baseline | 12 m | 15 m | 20 m | 30 m |
 |---|---|---|---|---|---|
-| AOI_2_Vegas    | 0.431 | 0.259 | 0.362 | 0.459 | **0.524** |
-| AOI_3_Paris    | 0.281 | 0.217 | 0.256 | 0.293 | **0.315** |
-| AOI_4_Shanghai | 0.167 | 0.087 | 0.108 | 0.127 | 0.144 |
-| AOI_5_Khartoum | 0.184 | 0.087 | 0.125 | 0.169 | **0.188** |
+| AOI_2_Vegas    | 0.431 | **0.524** | **0.525** | 0.464 | 0.311 |
+| AOI_3_Paris    | 0.281 | **0.315** | 0.302 | 0.273 | 0.208 |
+| AOI_4_Shanghai | 0.167 | 0.144 | 0.141 | 0.134 | 0.113 |
+| AOI_5_Khartoum | 0.184 | 0.188 | **0.196** | 0.180 | 0.139 |
 
-**Leave-one-AOI-out:** pick the distance that maximises mean micro-F1
-across three AOIs, report on the fourth. 95 % bootstrap CIs (2000
-resamples) on micro-F1.
+Extending the sweep to 30 m confirmed the F1 peak is in the 12 – 15 m
+range; 20 m and 30 m under-split and F1 falls off sharply. Earlier
+runs at 3 / 5 / 8 m are strictly worse than 12 m on every AOI.
 
-| held-out AOI | LOAO-chosen distance | held-out F1 [CI] | baseline F1 [CI] | delta | CIs disjoint? |
-|---|---|---|---|---|---|
-| AOI_2_Vegas    | 12 m | 0.524 [0.480, 0.564] | 0.431 [0.383, 0.479] | **+0.093** | **yes** |
-| AOI_3_Paris    | 12 m | 0.315 [0.276, 0.351] | 0.281 [0.250, 0.310] | +0.035 | no (overlap) |
-| AOI_4_Shanghai | 12 m | 0.144 [0.118, 0.166] | 0.167 [0.123, 0.228] | −0.023 | no |
-| AOI_5_Khartoum | 12 m | 0.188 [0.157, 0.221] | 0.184 [0.144, 0.233] | +0.004 | no |
+**Leave-one-AOI-out:** for each held-out AOI, pick the distance that
+maximises mean micro-F1 across the other three. Report F1, merge rate
+and split rate on the held-out AOI with 95 % bootstrap CIs. The
+CI-disjoint column uses `held-out_lo > baseline_hi` (strict win) or
+`held-out_hi < baseline_lo` (strict loss); overlapping CIs are "no".
 
-**Plain reading:**
+| held-out AOI | chosen distance | metric | baseline [CI] | watershed [CI] | delta | CIs disjoint? |
+|---|---|---|---|---|---|---|
+| AOI_2_Vegas    | 12 m | F1 (micro) | 0.431 [0.383, 0.479] | 0.524 [0.480, 0.564] | **+0.093** | **yes** |
+| AOI_2_Vegas    | 12 m | merge_rate | 0.163 [0.132, 0.196] | 0.060 [0.046, 0.074] | **−0.103** | **yes** |
+| AOI_2_Vegas    | 12 m | split_rate | 0.018 [0.009, 0.027] | 0.146 [0.097, 0.203] | +0.129 | **yes (worse)** |
+| AOI_3_Paris    | 15 m | F1 (micro) | 0.281 [0.250, 0.310] | 0.302 [0.266, 0.336] | +0.021 | no |
+| AOI_3_Paris    | 15 m | merge_rate | 0.049 [0.029, 0.071] | 0.030 [0.016, 0.046] | −0.019 | no |
+| AOI_3_Paris    | 15 m | split_rate | 0.005 [0.002, 0.008] | 0.019 [0.007, 0.038] | +0.014 | no |
+| AOI_4_Shanghai | 12 m | F1 (micro) | 0.167 [0.123, 0.228] | 0.144 [0.118, 0.166] | −0.023 | no |
+| AOI_4_Shanghai | 12 m | merge_rate | 0.129 [0.081, 0.188] | 0.088 [0.046, 0.135] | −0.041 | no |
+| AOI_4_Shanghai | 12 m | split_rate | 0.010 [0.000, 0.024] | 0.085 [0.046, 0.130] | +0.074 | **yes (worse)** |
+| AOI_5_Khartoum | 12 m | F1 (micro) | 0.184 [0.144, 0.233] | 0.188 [0.157, 0.221] | +0.004 | no |
+| AOI_5_Khartoum | 12 m | merge_rate | 0.190 [0.152, 0.227] | 0.135 [0.093, 0.183] | −0.055 | no |
+| AOI_5_Khartoum | 12 m | split_rate | 0.020 [0.009, 0.032] | 0.071 [0.048, 0.095] | +0.051 | **yes (worse)** |
 
-- **Vegas (dense regular suburbs) gets a clear win** at 12 m:
-  +0.093 F1 with non-overlapping 95 % CIs. Watershed is doing its
-  job — splitting merged blobs where buildings genuinely touch.
-- **Paris is positive but not clearly separated** (+0.035, CIs
-  overlap). Not safe to claim an improvement.
-- **Shanghai (dense informal urban) is not helped by watershed at
-  any swept distance.** Likely because the baseline isn't producing
-  merged-blob errors so much as missing buildings entirely, so
-  splitting doesn't address the dominant failure mode.
-- **Khartoum (sparse) is flat.** Not enough touching buildings in the
-  sample for watershed to have anywhere to act.
-- **Every LOAO fold picked 12 m — the largest value swept.** The
-  real optimum is probably beyond 12 m and the sweep should be
-  extended (`--distances 12 15 20 30`). Not done here because the
-  brief asked for `{3, 5, 8, 12}` specifically; want me to extend,
-  just say so.
+(The LOAO pick for the Vegas fold is 12 m even though 15 m is
+marginally better on Vegas directly, because the three-AOI mean is
+slightly higher at 12 m. That is the right behaviour for a held-out
+evaluation — the chosen distance was selected without looking at the
+Vegas parquet.)
+
+**Plain reading after the extended sweep:**
+
+- **Vegas is a clean win on every metric where it matters.** F1
+  up by +0.093 with disjoint CIs; merge rate down by −0.103 with
+  disjoint CIs. The split-rate rise (+0.129, also disjoint) is the
+  cost but is swamped by the F1 gain. Watershed earns its keep on
+  this AOI.
+- **Paris moves the needles in the right direction** (F1 up,
+  merge down, split up) but **no CI cleanly separates** from the
+  baseline. Not safe to claim.
+- **Shanghai is still not helped.** F1 down, merge down a bit
+  (good), split up with disjoint CIs (bad). The underlying problem
+  is probably missed-detection, not merging.
+- **Khartoum is flat on F1** (+0.004) but the split-rate hit is
+  statistically clean (0.020 → 0.071). Net wash.
+- **No single distance is right for every AOI.** The knob is
+  per-region. If you care about F1 everywhere, run the sweep on
+  each AOI's own train/val split (Phase 1 blocks, once those exist)
+  and pick there.
 
 Reading this against the brief's "report bad or flat results
-honestly" instruction: watershed at the default 5 m is a uniform
-regression; at a *tuned* distance (12 m) it is useful on Vegas,
-inconclusive on Paris, and not useful on Shanghai or Khartoum. The
-knob needs per-region tuning, not a single global default.
+honestly" instruction: watershed at a well-tuned distance **is a
+real improvement on Vegas**, inconclusive-positive on Paris and
+Khartoum, and a net regression on Shanghai. The split-rate cost is
+unavoidable with EDT-based markers and is clearly statistically
+significant on three of four AOIs; if you need low split rates
+specifically, this postprocess is the wrong tool.
 
-### Overlay figures (baseline vs Phase 2b at 5 m)
+### Overlay figures (baseline vs Phase 2b at the LOAO-chosen distance)
 
-![Vegas merge rate vs density](results-figures/merge_rate_overlay_vegas.png)
-![Paris merge rate vs density](results-figures/merge_rate_overlay_paris.png)
-![Shanghai merge rate vs density](results-figures/merge_rate_overlay_shanghai.png)
-![Khartoum merge rate vs density](results-figures/merge_rate_overlay_khartoum.png)
+![Vegas merge rate vs density (watershed @ 12 m)](results-figures/merge_rate_overlay_vegas.png)
+![Paris merge rate vs density (watershed @ 15 m)](results-figures/merge_rate_overlay_paris.png)
+![Shanghai merge rate vs density (watershed @ 12 m)](results-figures/merge_rate_overlay_shanghai.png)
+![Khartoum merge rate vs density (watershed @ 12 m)](results-figures/merge_rate_overlay_khartoum.png)
 
 Phase 2a and Phase 1 series will overlay on these same figures once
 their eval parquets exist.

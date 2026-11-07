@@ -30,7 +30,7 @@ def _load_pred_mask(pred_prob: np.ndarray | Path,
     or a rasterio dataset-like. Callers pass a probability [0, 1] or a
     binary mask; both are accepted.
     """
-    if isinstance(pred_prob, (str, Path)):
+    if isinstance(pred_prob, str | Path):
         with rasterio.open(str(pred_prob)) as src:
             arr = src.read(1)
     else:

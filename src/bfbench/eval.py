@@ -74,6 +74,10 @@ class EvalConfig:
     equal_area_epsg: int
     iou_threshold: float
     pixel_resolution_m: float
+    # Phase 1/2a share work_dir but must not clobber each other's
+    # results.parquet. Defaults to "eval" (Phase 1 / baseline);
+    # Phase 2a configs set this to "eval_phase2a".
+    output_subdir: str = "eval"
 
 
 def _load(path: Path) -> EvalConfig:
@@ -88,6 +92,7 @@ def _load(path: Path) -> EvalConfig:
         equal_area_epsg=int(ref["equal_area_epsg"]),
         iou_threshold=float(ev.get("iou_threshold", 0.5)),
         pixel_resolution_m=float(ev.get("pixel_resolution_m", 0.5)),
+        output_subdir=str(ev.get("output_subdir", "eval")),
     )
 
 
@@ -387,7 +392,7 @@ def evaluate(cfg_path: Path,
         else _read_pred_gdf(cfg.work_dir, ea_crs)
     )
 
-    stage_dir = cfg.work_dir / "eval" / "tiles"
+    stage_dir = cfg.work_dir / cfg.output_subdir / "tiles"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     _LOG.info("eval aoi=%s tiles=%d pred=%d ref=%d",
@@ -407,7 +412,7 @@ def evaluate(cfg_path: Path,
             _LOG.info("  eval progress: %d/%d tiles", i + 1, len(tiles))
 
     df = pd.DataFrame(all_rows)
-    out = cfg.work_dir / "eval" / "results.parquet"
+    out = cfg.work_dir / cfg.output_subdir / "results.parquet"
     df.to_parquet(out, index=False)
 
     manifest = {
@@ -427,7 +432,7 @@ def evaluate(cfg_path: Path,
             if len(df) else 0,
         "n_metrics_error": int((df["status"] == "error").sum()) if len(df) else 0,
     }
-    (cfg.work_dir / "eval" / "eval_manifest.json").write_text(
+    (cfg.work_dir / cfg.output_subdir / "eval_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8",
     )
     _LOG.info("wrote %s (%d rows: ok=%d, not_implemented=%d, error=%d)",

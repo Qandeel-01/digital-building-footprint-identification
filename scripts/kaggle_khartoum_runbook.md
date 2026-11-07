@@ -115,17 +115,28 @@ them** — no need to run cells 5/6/7 from the old runbook separately:
 !bfbench train configs/spacenet_khartoum_phase2a.yaml
 ```
 
-### Cell 8 — Phase 2a eval (the `argmax_interior` wiring is in; a
-3-class checkpoint without it now **errors loudly** before predict
-runs rather than producing silent garbage)
+### Cell 8 — Phase 2a eval + rescore baseline on the SAME test blocks + comparison
+
+The `argmax_interior` wiring is in; a 3-class checkpoint without it
+now **errors loudly** before predict runs rather than producing
+silent garbage. `kaggle_phase1.py` + `compare_baseline_vs_finetuned.py
+--config` both accept Phase 2a configs (they read `eval.output_subdir`
+to find the right parquet path, which Phase 2a sets to `eval_phase2a`
+so Phase 1 and Phase 2a results don't clobber each other).
 
 ```bash
+# 1. Run the Phase 2a pipeline against the 3-class checkpoint.
 !bfbench run-prepared configs/spacenet_khartoum_phase2a.yaml
 !bfbench eval configs/spacenet_khartoum_phase2a.yaml
-# Same comparison helper, pointed at the 2a config this time:
+# 2. Rescore the baseline (binary) on the same held-out test blocks.
+!python scripts/kaggle_phase1.py evaluate-baseline-on-phase1-tiles \
+    configs/spacenet_khartoum_phase2a.yaml
+# 3. Build the comparison table (resolves both parquet paths from
+# the config via resolve_from_config). No fallback -- failures are
+# real and should surface.
 !python scripts/kaggle_phase1.py build-comparison \
-    configs/spacenet_khartoum_phase2a.yaml 2>/dev/null \
-    || python -c "print('build-comparison does not yet support Phase 2a configs; compare manually via scripts/compare_baseline_vs_finetuned.py')"
+    configs/spacenet_khartoum_phase2a.yaml
+!cat runs/khartoum_prepare/eval_phase2a/comparison_AOI_5_Khartoum.md
 ```
 
 ### Cell 9 — package parquets for download

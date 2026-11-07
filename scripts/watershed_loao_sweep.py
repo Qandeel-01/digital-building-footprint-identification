@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bfbench.metrics.bootstrap import bootstrap_micro_prf
+from bfbench.metrics.bootstrap import bootstrap_mean_ci, bootstrap_micro_prf
 
 _LOG = logging.getLogger("bfbench.watershed_loao_sweep")
 
@@ -80,6 +80,18 @@ def _f1_ci(parquet: Path) -> tuple[float, float, float]:
     cis = bootstrap_micro_prf(tp_fp_fn, n_boot=2000, seed=0)
     f1_ci = cis["f1"]
     return (f1_ci.point, f1_ci.lo, f1_ci.hi)
+
+
+def _mean_metric_ci(parquet: Path, metric: str) -> tuple[float, float, float]:
+    """95% bootstrap CI on the mean per-tile value of `metric`
+    (e.g. 'merge_rate', 'split_rate')."""
+    df = pd.read_parquet(parquet)
+    arr = df[df.metric == metric].value.to_numpy(dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if len(arr) == 0:
+        return (float("nan"), float("nan"), float("nan"))
+    ci = bootstrap_mean_ci(arr, n_boot=2000, seed=0)
+    return (ci.point, ci.lo, ci.hi)
 
 
 def _sweep_parquets(aoi: str, distances_m: list[int]) -> dict[int, Path]:
@@ -142,11 +154,14 @@ def main(argv: list[str] | None = None) -> int:
         print("| " + " | ".join(cells) + " |")
 
     # LOAO: for each held-out AOI, pick the distance that maximises
-    # mean F1 across the other three AOIs.
+    # mean F1 across the other three AOIs. Report F1, merge_rate,
+    # split_rate side-by-side with CIs. CI-disjoint flag indicates
+    # whether the F1 improvement is statistically clean.
     print("\n### Leave-one-AOI-out sweep\n")
-    print("| held-out AOI | best distance (by 3-AOI mean F1) | 3-AOI mean F1 | "
-          "held-out F1 @ chosen | held-out F1 [CI] | baseline F1 [CI] | delta |")
+    print("| held-out AOI | chosen distance | metric | baseline [CI] | "
+          "watershed [CI] | delta | CIs disjoint? |")
     print("|---|---|---|---|---|---|---|")
+    loao_choices: list[int] = []
     for held_out in AOIS:
         others = [a for a in AOIS if a != held_out]
         means = {}
@@ -157,15 +172,29 @@ def main(argv: list[str] | None = None) -> int:
             ]
             means[d] = float(np.nanmean(vals))
         best_d = max(means, key=lambda d: means[d])
-        chosen_parquet = _sweep_parquets(held_out, [best_d])[best_d]
-        chosen_point, chosen_lo, chosen_hi = _f1_ci(chosen_parquet)
-        base_point, base_lo, base_hi = _f1_ci(_baseline_parquet(held_out))
-        delta = chosen_point - base_point
-        print(f"| {AOI_LABEL[held_out]} | {best_d} m | {means[best_d]:.3f} | "
-              f"{chosen_point:.3f} | "
-              f"{chosen_point:.3f} [{chosen_lo:.3f}, {chosen_hi:.3f}] | "
-              f"{base_point:.3f} [{base_lo:.3f}, {base_hi:.3f}] | "
-              f"{delta:+.3f} |")
+        loao_choices.append(best_d)
+        chosen_pq = _sweep_parquets(held_out, [best_d])[best_d]
+        base_pq   = _baseline_parquet(held_out)
+        for metric_name, label in (
+            ("f1",         "F1 (micro)"),
+            ("merge_rate", "merge_rate"),
+            ("split_rate", "split_rate"),
+        ):
+            if metric_name == "f1":
+                b_p, b_lo, b_hi = _f1_ci(base_pq)
+                c_p, c_lo, c_hi = _f1_ci(chosen_pq)
+            else:
+                b_p, b_lo, b_hi = _mean_metric_ci(base_pq, metric_name)
+                c_p, c_lo, c_hi = _mean_metric_ci(chosen_pq, metric_name)
+            delta = c_p - b_p
+            # For merge/split, lower is better by design. Mark CI-disjoint
+            # when the intervals don't overlap, regardless of direction.
+            disjoint = c_lo > b_hi or c_hi < b_lo
+            print(f"| {AOI_LABEL[held_out]} | {best_d} m | {label} | "
+                  f"{b_p:.3f} [{b_lo:.3f}, {b_hi:.3f}] | "
+                  f"{c_p:.3f} [{c_lo:.3f}, {c_hi:.3f}] | "
+                  f"{delta:+.3f} | "
+                  f"{'yes' if disjoint else 'no'} |")
 
     # Topline: does ANY setting beat the baseline on ANY AOI, by a
     # margin whose CIs clearly separate?
@@ -203,20 +232,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("**No sweep setting beats baseline F1 on any AOI.**")
 
-    # If every LOAO choice is at the max swept distance, tell the user.
-    loao_choices = []
-    for held_out in AOIS:
-        others = [a for a in AOIS if a != held_out]
-        means = {d: float(np.nanmean([
-            _f1_point(_sweep_parquets(aoi, [d])[d]) for aoi in others
-        ])) for d in distances}
-        loao_choices.append(max(means, key=lambda d: means[d]))
     if all(c == max(distances) for c in loao_choices):
         print(
             f"\n**NB: every LOAO choice is at {max(distances)} m, the "
             f"largest swept value. The sweep is probably not at the "
-            "peak -- rerun with --distances {largest}+ to find the "
-            "actual maximum.".format(largest=max(distances))
+            f"peak -- rerun with larger --distances to find the "
+            f"actual maximum.**"
         )
     return 0
 

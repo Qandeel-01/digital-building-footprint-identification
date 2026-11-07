@@ -223,29 +223,108 @@ def _render_markdown(data: dict) -> str:
     return "\n".join(lines)
 
 
+def resolve_from_config(config_path: Path) -> dict:
+    """Resolve baseline + fine-tuned parquet paths from a Phase 1 or
+    Phase 2a YAML config.
+
+    Rules:
+        * The AOI label and the fine-tuned work_dir + eval subdir come
+          straight from the YAML.
+        * The fine-tuned parquet is at `<work_dir>/<eval.output_subdir
+          or "eval">/results.parquet`.
+        * The baseline parquet is at `<work_dir>/baseline_rescored/
+          <eval.output_subdir or "eval">/results.parquet` -- produced
+          by `scripts/kaggle_phase1.py evaluate-baseline-on-phase1-
+          tiles` from the same held-out blocks.
+        * The output dir for the comparison .md / .json is the fine-
+          tuned eval subdir.
+
+    Works for any config whose shape matches the Phase 1 / 2a schema
+    (aoi.name, run.work_dir, eval.output_subdir). Rejects configs
+    without a `split:` section because those don't produce comparable
+    held-out tiles (Phase 2/3 benchmark configs).
+
+    Returns a dict with: config_source, aoi, finetuned_parquet,
+    baseline_parquet, out_dir.
+    """
+    import yaml  # noqa: PLC0415
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"config not found: {config_path}")
+    y = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if "split" not in y:
+        raise ValueError(
+            f"config {config_path} has no `split:` section; this script "
+            "requires a config that produces held-out test blocks "
+            "(Phase 1 or Phase 2a). Use --baseline / --finetuned "
+            "explicitly for ad-hoc parquet comparisons."
+        )
+    aoi = str(y["aoi"]["name"])
+    work_dir = Path(y["run"]["work_dir"])
+    eval_subdir = str((y.get("eval") or {}).get("output_subdir", "eval"))
+    finetuned = work_dir / eval_subdir / "results.parquet"
+    baseline  = work_dir / "baseline_rescored" / eval_subdir / "results.parquet"
+    return {
+        "config_source": str(config_path.resolve()),
+        "aoi":                aoi,
+        "finetuned_parquet":  finetuned,
+        "baseline_parquet":   baseline,
+        "out_dir":            finetuned.parent,
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--baseline", type=Path, required=True,
-                   help="path to the BASELINE eval parquet (same test tiles)")
-    p.add_argument("--finetuned", type=Path, required=True,
-                   help="path to the FINE-TUNED eval parquet")
-    p.add_argument("--aoi", type=str, required=True,
-                   help="AOI label for the output filename (e.g. AOI_2_Vegas)")
-    p.add_argument("--out-dir", type=Path, required=True)
+    p.add_argument("--config", type=Path, default=None,
+                   help="Phase 1 or Phase 2a YAML; auto-resolves "
+                        "--baseline/--finetuned/--aoi/--out-dir.")
+    p.add_argument("--baseline", type=Path, default=None,
+                   help="path to the BASELINE eval parquet (ignored "
+                        "when --config is given).")
+    p.add_argument("--finetuned", type=Path, default=None,
+                   help="path to the FINE-TUNED eval parquet (ignored "
+                        "when --config is given).")
+    p.add_argument("--aoi", type=str, default=None,
+                   help="AOI label for the output filename (ignored "
+                        "when --config is given).")
+    p.add_argument("--out-dir", type=Path, default=None,
+                   help="Output dir (ignored when --config is given).")
     p.add_argument("--n-boot", type=int, default=DEFAULT_N_BOOT)
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = p.parse_args()
 
-    for arg in ("baseline", "finetuned"):
-        pth = getattr(args, arg)
-        if not pth.is_file():
-            print(f"ERROR: {arg} parquet not found at {pth}", file=sys.stderr)
+    if args.config is not None:
+        resolved = resolve_from_config(args.config)
+        baseline  = resolved["baseline_parquet"]
+        finetuned = resolved["finetuned_parquet"]
+        aoi       = resolved["aoi"]
+        out_dir   = resolved["out_dir"]
+        print(f"resolved from {args.config}:")
+        print(f"  aoi       = {aoi}")
+        print(f"  baseline  = {baseline}")
+        print(f"  finetuned = {finetuned}")
+        print(f"  out_dir   = {out_dir}")
+    else:
+        for name in ("baseline", "finetuned", "aoi", "out_dir"):
+            if getattr(args, name) is None:
+                print(f"ERROR: --{name.replace('_', '-')} is required when "
+                      "--config is not given.", file=sys.stderr)
+                return 2
+        baseline  = args.baseline
+        finetuned = args.finetuned
+        aoi       = args.aoi
+        out_dir   = args.out_dir
+
+    for label, pth in (("baseline", baseline), ("finetuned", finetuned)):
+        if not Path(pth).is_file():
+            print(f"ERROR: {label} parquet not found at {pth}", file=sys.stderr)
             return 2
-    out = compare(args.baseline, args.finetuned, args.aoi, args.out_dir,
+
+    out = compare(baseline, finetuned, aoi, out_dir,
                  n_boot=args.n_boot, seed=args.seed)
     print(f"n_shared_tiles: {out['n_shared_tiles']}")
-    print(f"wrote: {args.out_dir / f'comparison_{args.aoi}.json'}")
-    print(f"wrote: {args.out_dir / f'comparison_{args.aoi}.md'}")
+    print(f"wrote: {out_dir / f'comparison_{aoi}.json'}")
+    print(f"wrote: {out_dir / f'comparison_{aoi}.md'}")
     return 0
 
 
